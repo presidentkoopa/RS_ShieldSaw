@@ -140,7 +140,9 @@ class RS_ShieldStowHandler : EventHandler
 		let pmo = p.mo;
 		if (!pmo) return;
 
+
 		if (cvOn("rs_ss_start", p, true) && !pmo.FindInventory("RS_ShieldSaw"))
 			pmo.GiveInventory("RS_ShieldSaw", 1);
+
 	}
 }
