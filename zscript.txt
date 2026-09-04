@@ -1,0 +1,12 @@
+// RS_ShieldSaw -- a standalone shield saw. One weapon, no framework.
+//
+// Rusted Legacy's original was `extend class RLOffhandFist`: not a weapon at
+// all, but a mode bolted onto the off-hand fist, and it needed DoomWeaponZ,
+// rlvr_Settings, the weapon HUD and the aim laser before it would compile.
+// None of that is here. This is a plain Weapon on stock GZDoom, it works in
+// either hand, and it loads on its own.
+version "4.10"
+
+#include "zscript/rs_shieldsaw_actors.zs"
+#include "zscript/rs_shieldsaw.zs"
+#include "zscript/rs_shieldsaw_stow.zs"

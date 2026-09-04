@@ -1,0 +1,27 @@
+// RS_ShieldSaw sounds.
+// Lumps are the originals; the aliases are ours, so what a state plays can be
+// changed without touching the state.
+
+rsshield/raise          ssawdraw
+rsshield/idle           ssawloop
+$volume rsshield/raise  0.7
+$volume rsshield/idle   0.7
+
+$random rsshield/hit    { shldhit1 shldhit2 shldhit3 }
+shldhit1                shldhit1
+shldhit2                shldhit2
+shldhit3                shldhit3
+$volume rsshield/hit    0.6
+
+$random rsshield/lock   { shdehit1 shdehit2 shdehit3 }
+shdehit1                shdehit1
+shdehit2                shdehit2
+shdehit3                shdehit3
+$volume rsshield/lock   0.5
+
+$random rsshield/bounce { shbounc1 shbounc2 shbounc3 }
+shbounc1                shbounc1
+shbounc2                shbounc2
+shbounc3                shbounc3
+
+rsshield/throw          shwhoosh

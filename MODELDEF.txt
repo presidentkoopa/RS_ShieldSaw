@@ -1,0 +1,133 @@
+// RS_ShieldSaw models.
+//
+// Meshes are the originals. shield.md3 is the shield body, frames 0 (closed)
+// to 3 (fully open). shieldsaw.md3 is the blade: 0 stowed, 1-4 deploying,
+// 5-7 spinning. hand.md3 is the hand, frame 1.
+//
+// SSAW carries the hand, SSNH does not. A_ShieldModel picks between them by
+// writing the psprite's sprite index, so both variants share one state table
+// instead of duplicating it. No graphics exist behind either name -- they are
+// MODELDEF keys only.
+
+// ---- held, with hand -----------------------------------------------------
+Model RS_ShieldSaw
+{
+	Path "models/shieldsaw"
+	Model 0 "shield.md3"
+	Skin 0 "shieldsaw_b_HD.png"
+	Model 1 "shieldsaw.md3"
+	Skin 1 "shieldsaw_HD.png"
+
+	Path "models/hand"
+	Model 2 "hand.md3"
+	Skin 2 "hand_HD.png"
+
+	Scale -1.0 1.0 1.0
+	Offset 0.0 -24.0 -10.0
+	PlacementCVars rs_ss_held
+
+	FrameIndex SSAW A 0 0	FrameIndex SSAW A 1 0	FrameIndex SSAW A 2 1
+	FrameIndex SSAW B 0 1	FrameIndex SSAW B 1 1	FrameIndex SSAW B 2 1
+	FrameIndex SSAW C 0 2	FrameIndex SSAW C 1 2	FrameIndex SSAW C 2 1
+	FrameIndex SSAW D 0 3	FrameIndex SSAW D 1 3	FrameIndex SSAW D 2 1
+	FrameIndex SSAW E 0 3	FrameIndex SSAW E 1 4	FrameIndex SSAW E 2 1
+	FrameIndex SSAW F 0 3	FrameIndex SSAW F 1 5	FrameIndex SSAW F 2 1
+	FrameIndex SSAW G 0 3	FrameIndex SSAW G 1 6	FrameIndex SSAW G 2 1
+	FrameIndex SSAW H 0 3	FrameIndex SSAW H 1 7	FrameIndex SSAW H 2 1
+}
+
+// ---- held, no hand -------------------------------------------------------
+Model RS_ShieldSaw
+{
+	Path "models/shieldsaw"
+	Model 0 "shield.md3"
+	Skin 0 "shieldsaw_b_HD.png"
+	Model 1 "shieldsaw.md3"
+	Skin 1 "shieldsaw_HD.png"
+
+	Scale -1.0 1.0 1.0
+	Offset 0.0 -24.0 -10.0
+	PlacementCVars rs_ss_held
+
+	FrameIndex SSNH A 0 0	FrameIndex SSNH A 1 0
+	FrameIndex SSNH B 0 1	FrameIndex SSNH B 1 1
+	FrameIndex SSNH C 0 2	FrameIndex SSNH C 1 2
+	FrameIndex SSNH D 0 3	FrameIndex SSNH D 1 3
+	FrameIndex SSNH E 0 3	FrameIndex SSNH E 1 4
+	FrameIndex SSNH F 0 3	FrameIndex SSNH F 1 5
+	FrameIndex SSNH G 0 3	FrameIndex SSNH G 1 6
+	FrameIndex SSNH H 0 3	FrameIndex SSNH H 1 7
+}
+
+// ---- in flight -----------------------------------------------------------
+Model RS_ShieldInFlight
+{
+	Path "models/shieldsaw"
+	Model 0 "shield_weapon.md3"
+	Skin 0 "shieldsaw_b_HD.png"
+	Scale 1.0 1.0 1.0
+	PitchFromMomentum
+
+	FrameIndex SFLY A 0 0
+	FrameIndex SFLY B 0 0
+	FrameIndex SFLY C 0 0
+	FrameIndex SFLY D 0 0
+	FrameIndex SFLY E 0 0
+	FrameIndex SFLY F 0 0
+	FrameIndex SFLY G 0 0
+	FrameIndex SFLY H 0 0
+}
+
+Model RS_ShieldTrail
+{
+	Path "models/shieldsaw"
+	Model 0 "shield_weapon_glow.md3"
+	Scale 1.0 1.0 1.0
+	FrameIndex SFLY A 0 0
+}
+
+// ---- lock marker ---------------------------------------------------------
+// The glow mesh again, small and spinning, so a lock reads without needing a
+// sprite that does not exist.
+Model RS_ShieldLockMark
+{
+	Path "models/shieldsaw"
+	Model 0 "shield_weapon_glow.md3"
+	Scale 0.5 0.5 0.5
+	// Each AngleOffset must come BEFORE the FrameIndex it applies to -- the
+	// parser snapshots the accumulated state when it reaches FrameIndex, so a
+	// trailing one is never used and every frame is a step behind.
+	AngleOffset 0.0
+	FrameIndex SLCK A 0 0
+	AngleOffset 90.0
+	FrameIndex SLCK B 0 0
+	AngleOffset 180.0
+	FrameIndex SLCK C 0 0
+	AngleOffset 270.0
+	FrameIndex SLCK D 0 0
+}
+
+// ---- stowed on the forearm -----------------------------------------------
+// UseHandOffsets puts this in the OFF HAND's frame so it rides the controller
+// at render rate. BaseFrame is required: the caller has a TNT1 Spawn state, so
+// there is no FrameIndex to hit and the lookup has to go through
+// BaseSpriteModelFrames -- which the engine only consults for a
+// +DECOUPLEDANIMATIONS actor.
+//
+// Offset is the starting position on the forearm. Negative Y walks it back
+// toward the elbow. rs_ss_stow_ofs_x / _ofs_y adjust from here at runtime.
+Model RS_ShieldStowProp
+{
+	Path "models/shieldsaw"
+	Model 0 "shield_weapon.md3"
+	Skin 0 "shieldsaw_b_HD.png"
+	Scale 1.0 1.0 1.0
+	Offset 0.0 -14.0 -6.0
+	PlacementCVars rs_ss_stow
+	UseHandOffsets
+	NOAUTOREVERSE
+	PitchOffset 90.0
+	RollOffset 0.0
+	AngleOffset 0.0
+	BaseFrame
+}

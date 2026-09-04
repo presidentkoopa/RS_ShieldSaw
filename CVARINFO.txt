@@ -1,0 +1,56 @@
+// RS_ShieldSaw.
+
+// Start the game holding it, no pickup needed.
+user bool  rs_ss_start       = true;
+
+// Hand model on the held shield.
+user bool  rs_ss_handmodel   = true;
+
+// ---- lock-on -------------------------------------------------------------
+user int   rs_ss_locks       = 5;        // targets one throw can visit
+user float rs_ss_lock_cone   = 14.0;     // acquire half-angle, from the HAND
+user float rs_ss_lock_range  = 1200.0;
+
+// ---- throw ---------------------------------------------------------------
+user float rs_ss_throw_speed = 1.0;
+user float rs_ss_cut_damage  = 1.0;
+
+// ---- passive -------------------------------------------------------------
+// The deflector exists only while the shield is IN YOUR HAND. Throwing it
+// costs you the guard; that is the point.
+user bool  rs_ss_deflect     = true;
+
+// ---- forearm stow --------------------------------------------------------
+// The shield straps to your off forearm when it is not in your hand, and keeps
+// deflecting there. Off puts it back to vanishing into inventory.
+user bool  rs_ss_stow        = true;
+
+// Keep it drawn even while held, so it can be positioned without putting it
+// away first. Turn off when you are done.
+user bool  rs_ss_stow_place  = false;
+
+// WHERE ON THE FOREARM, and where in the hand. These are read LIVE by the
+// renderer every frame through MODELDEF's PlacementCVars -- the engine looks
+// the names up by prefix, so the prefix in MODELDEF and the names here have to
+// agree and nothing in ZScript touches them.
+//
+// A number found on a slider can be folded straight into MODELDEF's Offset and
+// the slider zeroed with nothing moving; they are summed in the same translate.
+
+// Stowed on the off forearm.
+user float rs_ss_stow_ofs_x  = 0.0;
+user float rs_ss_stow_ofs_y  = 0.0;
+user float rs_ss_stow_ofs_z  = 0.0;
+user float rs_ss_stow_yaw    = 0.0;
+user float rs_ss_stow_pitch  = 0.0;
+user float rs_ss_stow_roll   = 0.0;
+user float rs_ss_stow_scale  = 1.0;
+
+// Held in the hand.
+user float rs_ss_held_ofs_x  = 0.0;
+user float rs_ss_held_ofs_y  = 0.0;
+user float rs_ss_held_ofs_z  = 0.0;
+user float rs_ss_held_yaw    = 0.0;
+user float rs_ss_held_pitch  = 0.0;
+user float rs_ss_held_roll   = 0.0;
+user float rs_ss_held_scale  = 1.0;

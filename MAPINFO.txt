@@ -1,0 +1,6 @@
+// The forearm stow needs a handler. AddEventHandlers appends across pk3s, so
+// this coexists with anything else loaded.
+GameInfo
+{
+	AddEventHandlers = "RS_ShieldStowHandler"
+}

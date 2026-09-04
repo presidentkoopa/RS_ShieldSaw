@@ -1,0 +1,72 @@
+// RS_ShieldSaw.
+//
+// AddOptionMenu appends to the engine's own Options menu rather than replacing
+// it, so this coexists with every other mod in the load order.
+
+AddOptionMenu "OptionsMenu"
+{
+	Submenu "RS Shield Saw", "RS_ShieldSaw_Root"
+}
+
+OptionMenu "RS_ShieldSaw_Root"
+{
+	Title "RS SHIELD SAW"
+	StaticText ""
+	Submenu "Shield Saw", "RS_ShieldSaw_Options"
+}
+
+OptionMenu "RS_ShieldSaw_Options"
+{
+	Title "SHIELD SAW"
+
+	StaticText ""
+	StaticText "Forearm", 1
+	Option "Strap to off forearm when stowed", "rs_ss_stow", "OnOff"
+	StaticText "Keeps deflecting there instead of", 2
+	StaticText "vanishing into your inventory.", 2
+
+	StaticText ""
+	Option "Show while held (for placing)", "rs_ss_stow_place", "OnOff"
+	StaticText "Leave this on while you set the sliders", 2
+	StaticText "below, then turn it off.", 2
+
+	StaticText ""
+	StaticText "Stowed on forearm", 1
+	Slider "Left / Right",   "rs_ss_stow_ofs_x", -30.0, 30.0, 0.5, 1
+	Slider "Forward / Back", "rs_ss_stow_ofs_y", -30.0, 30.0, 0.5, 1
+	Slider "Down / Up",      "rs_ss_stow_ofs_z", -30.0, 30.0, 0.5, 1
+	Slider "Yaw",            "rs_ss_stow_yaw",  -180.0, 180.0, 1.0, 1
+	Slider "Pitch",          "rs_ss_stow_pitch",-180.0, 180.0, 1.0, 1
+	Slider "Roll",           "rs_ss_stow_roll", -180.0, 180.0, 1.0, 1
+	Slider "Scale",          "rs_ss_stow_scale",   0.1, 5.0, 0.05, 2
+
+	StaticText ""
+	StaticText "Held in hand", 1
+	Slider "Left / Right",   "rs_ss_held_ofs_x", -30.0, 30.0, 0.5, 1
+	Slider "Forward / Back", "rs_ss_held_ofs_y", -30.0, 30.0, 0.5, 1
+	Slider "Down / Up",      "rs_ss_held_ofs_z", -30.0, 30.0, 0.5, 1
+	Slider "Yaw",            "rs_ss_held_yaw",  -180.0, 180.0, 1.0, 1
+	Slider "Pitch",          "rs_ss_held_pitch",-180.0, 180.0, 1.0, 1
+	Slider "Roll",           "rs_ss_held_roll", -180.0, 180.0, 1.0, 1
+	Slider "Scale",          "rs_ss_held_scale",   0.1, 5.0, 0.05, 2
+
+	StaticText ""
+	StaticText "Lock-on", 1
+	Slider "Targets per throw",   "rs_ss_locks",       1, 16, 1, 0
+	Slider "Aim cone (degrees)",  "rs_ss_lock_cone",   2.0, 60.0, 1.0, 0
+	Slider "Lock range",          "rs_ss_lock_range",  128.0, 4000.0, 64.0, 0
+
+	StaticText ""
+	StaticText "Throw", 1
+	Slider "Speed",  "rs_ss_throw_speed", 0.2, 3.0, 0.1, 1
+	Slider "Damage", "rs_ss_cut_damage",  0.2, 5.0, 0.1, 1
+
+	StaticText ""
+	StaticText "Shield", 1
+	Option "Deflect projectiles", "rs_ss_deflect",   "OnOff"
+	Option "Hand model",          "rs_ss_handmodel", "OnOff"
+	Option "Start with it",       "rs_ss_start",     "OnOff"
+
+	StaticText ""
+	SafeCommand "Reset all", "resetcvar rs_ss_stow rs_ss_stow_place rs_ss_stow_ofs_x rs_ss_stow_ofs_y rs_ss_stow_ofs_z rs_ss_stow_yaw rs_ss_stow_pitch rs_ss_stow_roll rs_ss_stow_scale rs_ss_held_ofs_x rs_ss_held_ofs_y rs_ss_held_ofs_z rs_ss_held_yaw rs_ss_held_pitch rs_ss_held_roll rs_ss_held_scale rs_ss_locks rs_ss_lock_cone rs_ss_lock_range rs_ss_throw_speed rs_ss_cut_damage rs_ss_deflect rs_ss_handmodel rs_ss_start"
+}
