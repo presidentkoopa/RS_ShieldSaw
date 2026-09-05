@@ -1,7 +1,11 @@
 // RS_ShieldSaw.
 
-// Start the game holding it, no pickup needed.
+// Start the game with it, no pickup needed.
 user bool  rs_ss_start       = true;
+
+// And with it already in your hand. Slot 1 holds Fist, Shield Saw and
+// Chainsaw, so without this "press 1" lands on the fist.
+user bool  rs_ss_equip       = true;
 
 // Hand model on the held shield.
 user bool  rs_ss_handmodel   = true;

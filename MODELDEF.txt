@@ -118,9 +118,16 @@ Model RS_ShieldLockMark
 // toward the elbow. rs_ss_stow_ofs_x / _ofs_y adjust from here at runtime.
 Model RS_ShieldStowProp
 {
+	// THE SAME TWO MESHES THE HELD VERSION USES. This was shield_weapon.md3
+	// alone -- the world/pickup mesh -- which is the shield body WITHOUT the
+	// saw blade, so the stowed shield was visibly missing its front.
+	// shield.md3 frame 0 is the shield closed, shieldsaw.md3 frame 0 is the
+	// blade stowed: the right pose for something strapped to your arm.
 	Path "models/shieldsaw"
-	Model 0 "shield_weapon.md3"
+	Model 0 "shield.md3"
 	Skin 0 "shieldsaw_b_HD.png"
+	Model 1 "shieldsaw.md3"
+	Skin 1 "shieldsaw_HD.png"
 	Scale 1.0 1.0 1.0
 	Offset 0.0 -14.0 -6.0
 	PlacementCVars rs_ss_stow

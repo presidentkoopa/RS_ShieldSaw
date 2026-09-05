@@ -66,7 +66,8 @@ OptionMenu "RS_ShieldSaw_Options"
 	Option "Deflect projectiles", "rs_ss_deflect",   "OnOff"
 	Option "Hand model",          "rs_ss_handmodel", "OnOff"
 	Option "Start with it",       "rs_ss_start",     "OnOff"
+	Option "Start holding it",    "rs_ss_equip",     "OnOff"
 
 	StaticText ""
-	SafeCommand "Reset all", "resetcvar rs_ss_stow rs_ss_stow_place rs_ss_stow_ofs_x rs_ss_stow_ofs_y rs_ss_stow_ofs_z rs_ss_stow_yaw rs_ss_stow_pitch rs_ss_stow_roll rs_ss_stow_scale rs_ss_held_ofs_x rs_ss_held_ofs_y rs_ss_held_ofs_z rs_ss_held_yaw rs_ss_held_pitch rs_ss_held_roll rs_ss_held_scale rs_ss_locks rs_ss_lock_cone rs_ss_lock_range rs_ss_throw_speed rs_ss_cut_damage rs_ss_deflect rs_ss_handmodel rs_ss_start"
+	SafeCommand "Reset all", "resetcvar rs_ss_stow rs_ss_stow_place rs_ss_stow_ofs_x rs_ss_stow_ofs_y rs_ss_stow_ofs_z rs_ss_stow_yaw rs_ss_stow_pitch rs_ss_stow_roll rs_ss_stow_scale rs_ss_held_ofs_x rs_ss_held_ofs_y rs_ss_held_ofs_z rs_ss_held_yaw rs_ss_held_pitch rs_ss_held_roll rs_ss_held_scale rs_ss_locks rs_ss_lock_cone rs_ss_lock_range rs_ss_throw_speed rs_ss_cut_damage rs_ss_deflect rs_ss_handmodel rs_ss_start rs_ss_equip"
 }

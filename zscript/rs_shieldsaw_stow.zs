@@ -151,6 +151,20 @@ class RS_ShieldStowHandler : EventHandler
 			// it. Weapon.SlotNumber alone does not help: it feeds the table
 			// that was already built.
 			WeaponSlots.SetupWeaponSlots(pmo);
+
+			// AND PUT IT IN YOUR HAND. Slot 1 holds three weapons now -- Fist,
+			// Shield Saw, Chainsaw -- so "press 1" lands on the fist and the
+			// saw looks missing. Equipping it on spawn is what "start with it"
+			// actually means.
+			if (cvOn("rs_ss_equip", p, true))
+			{
+				let w = Weapon(pmo.FindInventory("RS_ShieldSaw"));
+				if (w)
+				{
+					p.PendingWeapon = w;
+					pmo.BringUpWeapon();
+				}
+			}
 		}
 
 	}
