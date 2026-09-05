@@ -34,6 +34,13 @@ class RS_ShieldInFlight : Actor
 	double       dmgMult;
 	private int     stalled;
 	private int     age;
+	private int     noclipFor;   // tics NOCLIP must stay on regardless
+	private bool    legHit;      // the route target actually took a cut
+	private int     outbound;    // fly straight this long when nothing is locked
+	// THE THROW PLANE. Captured from the wrist at release and held for the
+	// whole flight, so the disc spins in the plane you actually threw it in --
+	// overhand, sidearm, or anything between -- instead of always vertical.
+	double          throwRoll;
 	// LastRipped in the engine is a local of P_XYMovement, rebuilt EVERY TIC --
 	// it stops a ripper re-hitting within one move, not within one pass. At
 	// Speed 22 the shield sits inside a body for about two tics, so without our
@@ -69,17 +76,34 @@ class RS_ShieldInFlight : Actor
 	{
 		leg = 0;
 		homing = false;
-		if (route.Size() > 0) aimAt(route[0]);
-		else A_ChangeVelocity(vel.x * speedMult, vel.y * speedMult, vel.z * speedMult, CVF_REPLACE);
+		legHit = false;
+		cutThisLeg.Clear();
+
+		if (route.Size() > 0)
+		{
+			aimAt(route[0]);
+			return;
+		}
+
+		// NOTHING PAINTED: fly straight out for a second before turning round.
+		// Without this the very first Tick fell to `else GoHome()` and the
+		// shield reversed before travelling a single tic, so an un-aimed throw
+		// was a weapon-swap flicker and a lost guard for nothing.
+		A_ChangeVelocity(vel.x * speedMult, vel.y * speedMult, vel.z * speedMult, CVF_REPLACE);
+		outbound = 35;
 	}
 
 	// Vel3DFromAngle writes VELOCITY ONLY -- it does not touch Angles.Yaw. Set
 	// it too, or the disc renders facing wherever it was thrown for the whole
 	// flight, and the trail inherits the same stale angle.
+	// NO cutThisLeg.Clear() HERE. aimAt is also the mid-leg course correction
+	// (every 4 tics) and the advance re-aim, so clearing here wiped the hit set
+	// while the shield was still inside the body it had just cut -- measured at
+	// three cuts on one target in a single pass. A new leg is a new pass, and
+	// advance()/GoHome() are the only two things that start one.
 	private void aimAt(Actor t)
 	{
 		if (!t) { GoHome(); return; }
-		cutThisLeg.Clear();
 		double a = AngleTo(t);
 		Vel3DFromAngle(Speed * speedMult, a, RS_ShieldSaw.PitchTo(self, t));
 		A_SetAngle(a, SPF_INTERPOLATE);
@@ -88,6 +112,7 @@ class RS_ShieldInFlight : Actor
 	// Next living target on the route, or home if there are none left.
 	private void advance()
 	{
+		cutThisLeg.Clear();
 		leg++;
 		while (leg < route.Size())
 		{
@@ -101,6 +126,11 @@ class RS_ShieldInFlight : Actor
 	void GoHome()
 	{
 		if (homing) return;
+		// A new leg is a new pass. This used to live in steerHome behind
+		// `if (!homing)`, which is never true there -- steerHome is only ever
+		// called with homing already set -- so the return trip could not re-cut
+		// anything it had passed through on the way out.
+		cutThisLeg.Clear();
 		homing = true;
 		ClearBounce();
 		steerHome();
@@ -111,7 +141,6 @@ class RS_ShieldInFlight : Actor
 	private void steerHome()
 	{
 		if (!master) { Destroy(); return; }
-		if (!homing) cutThisLeg.Clear();
 		Vector3 hp = master.OffhandPos;
 		double ang = atan2(hp.y - pos.y, hp.x - pos.x);
 		double pit = -atan2(hp.z - pos.z, max(1.0, (hp.xy - pos.xy).Length()));
@@ -124,10 +153,21 @@ class RS_ShieldInFlight : Actor
 		Super.Tick();
 		if (bDestroyed) return;
 
+		// THE PLANE IS HELD, NOT DERIVED. Vel3DFromAngle rewrites pitch every
+		// time the shield steers, and PitchFromMomentum used to overwrite it
+		// again at draw time -- either would drag the disc back to whatever
+		// plane its velocity implied and undo the throw.
+		roll = throwRoll;
+
 		if (level.time % 2 == 0)
 		{
 			let t = Actor.Spawn("RS_ShieldTrail", pos);
-			if (t) t.A_SetAngle(angle);
+			if (t)
+			{
+				t.A_SetAngle(angle);
+				t.roll  = roll;
+				t.pitch = pitch;
+			}
 		}
 
 		if (!master) { Destroy(); return; }
@@ -149,9 +189,18 @@ class RS_ShieldInFlight : Actor
 		else if (leg < route.Size())
 		{
 			Actor t = route[leg];
-			if (!t || t.health <= 0 || Distance3D(t) < max(32.0, vel.Length() * 1.2)) advance();
+			// Proximity stays as the fallback for a target that cannot be cut --
+			// already dead, or we passed just wide -- but its radius no longer
+			// scales with speed.
+			double reach = t ? (t.radius + radius + 8.0) : 32.0;
+			if (!t || t.health <= 0 || legHit || Distance3D(t) < reach)
+			{
+				legHit = false;
+				advance();
+			}
 			else if (level.time % 4 == 0) aimAt(t);
 		}
+		else if (outbound > 0) outbound--;
 		else GoHome();
 
 		// WEDGED IN GEOMETRY. The clear-condition used to run in the same tic as
@@ -159,10 +208,23 @@ class RS_ShieldInFlight : Actor
 		// common case, since it is homing at you -- had NOCLIP set and cleared
 		// before it moved once, and never escaped. `flying` then stayed non-null
 		// for the rest of the level: no deflector, no stow, locks never cleared.
-		if (Level.Vec3Diff(pos, prevPos).Length() < 2.0) stalled++;
-		else stalled = 0;
-		if (stalled > 6) { stalled = 0; bNOCLIP = true; GoHome(); }
-		if (bNOCLIP && homing && stalled == 0 && Distance3D(master) < 200) bNOCLIP = false;
+		// ARMING NOCLIP USED TO DISARM IT IN THE SAME TIC: the clear tested
+		// `stalled == 0`, and the line that armed it had just zeroed `stalled`.
+		// Within 200 units of the player -- the common case, since it is homing
+		// at you -- it was set and cleared before Super.Tick() ever moved the
+		// actor with it on, so a wedged shield never escaped and sat in the wall
+		// for the full twelve seconds.
+		//
+		// Give it its own timer, and clear on evidence of actual movement
+		// rather than on the counter that armed it.
+		bool moved = Level.Vec3Diff(pos, prevPos).Length() >= 2.0;
+		if (!moved) stalled++; else stalled = 0;
+		if (stalled > 6) { stalled = 0; bNOCLIP = true; noclipFor = 20; GoHome(); }
+		if (bNOCLIP)
+		{
+			if (noclipFor > 0) noclipFor--;
+			else if (moved) bNOCLIP = false;
+		}
 
 		// Last resort. Whatever went wrong, the shield comes back.
 		if (++age > 35 * 12)
@@ -194,6 +256,12 @@ class RS_ShieldInFlight : Actor
 			if (cutThisLeg[i] == victim) return -1;
 		cutThisLeg.Push(victim);
 
+		// ADVANCE ON A HIT, not on proximity. The proximity threshold scaled
+		// with throw speed, so at 3.0 the shield veered off toward the next
+		// waypoint about 47 units before touching the current one, and that
+		// target took nothing at all.
+		if (leg < route.Size() && victim == route[leg]) legHit = true;
+
 		return int(random[ShieldCut](24, 44) * clamp(dmgMult, 0.1, 10.0));
 	}
 
@@ -205,8 +273,10 @@ class RS_ShieldInFlight : Actor
 
 	States
 	{
+	// SIXTEEN FRAMES OF REAL SPIN, one tic each -- the mesh carries the whole
+	// rotation and the old eight-letter run drew frame 0 sixteen times over.
 	Spawn:
-		SFLY ABCDEFGH 1 Bright;
+		SFLY ABCDEFGHIJKLMNOP 1 Bright;
 		Loop;
 	Bounce:
 		SFLY A 0 A_StartSound("rsshield/bounce", CHAN_BODY);
@@ -310,8 +380,17 @@ class RS_ShieldDeflector : Actor
 {
 	Default
 	{
-		Radius 16;
-		Height 40;
+		// SMALL, AND IT HAS TO BE. An actor whose bounding box CONTAINS a trace
+		// origin is pushed as an intercept at frac 0, and a hitscan has no
+		// victim-side way to opt out -- so a box big enough to swallow the hand
+		// eats every shot the player fires, from any weapon, at zero range.
+		// Measured: 0 damage to an imp 140 units away.
+		//
+		// Small, and sat a full radius clear of the hand (see holdDeflector),
+		// keeps the trace origin outside the box. In the non-VR fallback
+		// AttackPos == OffhandPos, so this matters there most of all.
+		Radius 10;
+		Height 28;
 		Health 1000;
 		Mass 1;
 		+SHOOTABLE
@@ -325,8 +404,9 @@ class RS_ShieldDeflector : Actor
 		Species "RS_ShieldSaw";
 		+NOTARGET
 		// Without this a +SHOOTABLE actor riding your hand is a legal autoaim
-		// target -- P_AimLineAttack only skips actors flagged NOTAUTOAIMED
-		// (p_map.cpp:4430) -- so the OTHER hand's weapon aims at your shield.
+		// target, so the OTHER hand's weapon aims at your shield. Note the
+		// engine gate is `!cl_doautoaim && ... && MF6_NOTAUTOAIMED`, so this
+		// only helps while autoaim is off -- it is not unconditional.
 		+NOTAUTOAIMED
 		// No +NODAMAGE: MF5_NODAMAGE is only consulted inside P_DamageMobj's
 		// native body, and DamageMobj below returns without calling Super, so
@@ -336,6 +416,26 @@ class RS_ShieldDeflector : Actor
 	}
 
 	private bool suppressed;
+
+	// YOUR OWN SHOTS PASS STRAIGHT THROUGH -- restored, having been lost in a
+	// rewrite. This is live now: the CanCollideWith gate in PIT_CheckThing was
+	// widened to fire for a missile striking a SHOOTABLE actor, and
+	// P_CanCollideWith calls the virtual on the victim with passive = true.
+	//
+	// Without it a rocket fired past your own shield detonates in your hand --
+	// measured at 128 self-damage.
+	//
+	// The RS_ShieldInFlight clause also stops a co-op partner's thrown shield
+	// exploding on YOUR guard: +DONTRIP makes the engine skip the rip branch,
+	// so it would be blocked and detonate.
+	override bool CanCollideWith(Actor other, bool passive)
+	{
+		if (!other || !master) return true;
+		if (other == master) return false;
+		if (other.bMissile && other.target == master) return false;
+		if (other is "RS_ShieldInFlight") return false;
+		return true;
+	}
 
 	// Our owner's own shots must not come home. DamageMobj runs BEFORE the
 	// engine reads bReflective -- PIT_CheckThing damages, then P_XYMovement
@@ -354,8 +454,12 @@ class RS_ShieldDeflector : Actor
 		// damage and melee, and each of those was clearing bReflective until the
 		// deflector's next tick -- a one-tic hole an enemy missile could arrive
 		// in and detonate instead of bouncing.
-		bool own = master && inflictor && inflictor.bMissile &&
-		           (source == master || inflictor.target == master);
+		// DIRECT IMPACTS ONLY. A rocket's SPLASH passes the rocket itself as
+		// inflictor with bMissile set, so your own explosive still cleared
+		// bReflective for a tic -- exactly the hole this was meant to close.
+		bool own = master && inflictor && inflictor.bMissile
+		           && !(flags & DMG_EXPLOSION)
+		           && (source == master || inflictor.target == master);
 		if (own)
 		{
 			bReflective = false;
@@ -366,7 +470,7 @@ class RS_ShieldDeflector : Actor
 		if (inflictor && inflictor.bMissile)
 		{
 			A_StartSound("rsshield/hit", CHAN_BODY);
-			level.VRHaptic(0, 0.7, 50.0);
+			level.VRHaptic(1, 0.7, 50.0);
 		}
 		return 0;
 	}

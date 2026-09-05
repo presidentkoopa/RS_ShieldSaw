@@ -22,8 +22,14 @@ Model RS_ShieldSaw
 	Model 2 "hand.md3"
 	Skin 2 "hand_HD.png"
 
-	Scale -1.0 1.0 1.0
+	// NOAUTOREVERSE + a positive scale, matching the stow block that draws the
+	// same mesh. The old `Scale -1` relied on the engine mirroring the model
+	// for the non-dominant hand to cancel it out -- and that mirror is applied
+	// only when the control scheme is right-handed, so a left-handed player got
+	// the shield rendered inside out.
+	Scale 1.0 1.0 1.0
 	Offset 0.0 -24.0 -10.0
+	NOAUTOREVERSE
 	PlacementCVars rs_ss_held
 
 	FrameIndex SSAW A 0 0	FrameIndex SSAW A 1 0	FrameIndex SSAW A 2 1
@@ -45,8 +51,14 @@ Model RS_ShieldSaw
 	Model 1 "shieldsaw.md3"
 	Skin 1 "shieldsaw_HD.png"
 
-	Scale -1.0 1.0 1.0
+	// NOAUTOREVERSE + a positive scale, matching the stow block that draws the
+	// same mesh. The old `Scale -1` relied on the engine mirroring the model
+	// for the non-dominant hand to cancel it out -- and that mirror is applied
+	// only when the control scheme is right-handed, so a left-handed player got
+	// the shield rendered inside out.
+	Scale 1.0 1.0 1.0
 	Offset 0.0 -24.0 -10.0
+	NOAUTOREVERSE
 	PlacementCVars rs_ss_held
 
 	FrameIndex SSNH A 0 0	FrameIndex SSNH A 1 0
@@ -60,22 +72,44 @@ Model RS_ShieldSaw
 }
 
 // ---- in flight -----------------------------------------------------------
+// SIXTEEN FRAMES, and they were all being thrown away. shield_weapon.md3
+// carries a full spin baked into frames 0-15; the old block mapped every
+// sprite letter to frame 0, so the shield slid through the air without
+// turning at all.
+//
+// UseActorRoll is what makes it a Captain America throw rather than a fixed
+// vertical one. The original bucketed the throw plane into seven states
+// (RollOffset 0, +/-30, +/-60, +/-90) chosen from the wrist at release; taking
+// the actor's own roll instead gives ANY angle, set once at launch from the
+// hand and held for the whole flight.
+//
+// PitchFromMomentum is deliberately gone with it: it overwrote the pitch every
+// frame from the velocity, which fights a throw plane the player chose.
 Model RS_ShieldInFlight
 {
 	Path "models/shieldsaw"
 	Model 0 "shield_weapon.md3"
 	Skin 0 "shieldsaw_b_HD.png"
 	Scale 1.0 1.0 1.0
-	PitchFromMomentum
+	UseActorPitch
+	UseActorRoll
 
 	FrameIndex SFLY A 0 0
-	FrameIndex SFLY B 0 0
-	FrameIndex SFLY C 0 0
-	FrameIndex SFLY D 0 0
-	FrameIndex SFLY E 0 0
-	FrameIndex SFLY F 0 0
-	FrameIndex SFLY G 0 0
-	FrameIndex SFLY H 0 0
+	FrameIndex SFLY B 0 1
+	FrameIndex SFLY C 0 2
+	FrameIndex SFLY D 0 3
+	FrameIndex SFLY E 0 4
+	FrameIndex SFLY F 0 5
+	FrameIndex SFLY G 0 6
+	FrameIndex SFLY H 0 7
+	FrameIndex SFLY I 0 8
+	FrameIndex SFLY J 0 9
+	FrameIndex SFLY K 0 10
+	FrameIndex SFLY L 0 11
+	FrameIndex SFLY M 0 12
+	FrameIndex SFLY N 0 13
+	FrameIndex SFLY O 0 14
+	FrameIndex SFLY P 0 15
 }
 
 Model RS_ShieldTrail
@@ -83,6 +117,8 @@ Model RS_ShieldTrail
 	Path "models/shieldsaw"
 	Model 0 "shield_weapon_glow.md3"
 	Scale 1.0 1.0 1.0
+	UseActorPitch
+	UseActorRoll
 	FrameIndex SFLY A 0 0
 }
 
@@ -107,34 +143,36 @@ Model RS_ShieldLockMark
 	FrameIndex SLCK D 0 0
 }
 
-// ---- stowed on the forearm -----------------------------------------------
-// UseHandOffsets puts this in the OFF HAND's frame so it rides the controller
-// at render rate. BaseFrame is required: the caller has a TNT1 Spawn state, so
-// there is no FrameIndex to hit and the lookup has to go through
-// BaseSpriteModelFrames -- which the engine only consults for a
-// +DECOUPLEDANIMATIONS actor.
+// ---- stowed on your back -------------------------------------------------
+// A WORLD model, not a psprite: it hangs off the body, and a psprite is drawn
+// in a HAND's frame -- there is no hand at your shoulder blade. UseActorPitch
+// and UseActorRoll let the mount lay it flat against your back at whatever
+// angle the sliders end up wanting.
 //
-// Offset is the starting position on the forearm. Negative Y walks it back
-// toward the elbow. rs_ss_stow_ofs_x / _ofs_y adjust from here at runtime.
-Model RS_ShieldStowProp
+// Frame 0 of both meshes: shield closed, blade stowed. The right pose for
+// something you are carrying rather than using.
+Model RS_ShieldStowActor
 {
-	// THE SAME TWO MESHES THE HELD VERSION USES. This was shield_weapon.md3
-	// alone -- the world/pickup mesh -- which is the shield body WITHOUT the
-	// saw blade, so the stowed shield was visibly missing its front.
-	// shield.md3 frame 0 is the shield closed, shieldsaw.md3 frame 0 is the
-	// blade stowed: the right pose for something strapped to your arm.
 	Path "models/shieldsaw"
 	Model 0 "shield.md3"
 	Skin 0 "shieldsaw_b_HD.png"
 	Model 1 "shieldsaw.md3"
 	Skin 1 "shieldsaw_HD.png"
 	Scale 1.0 1.0 1.0
-	Offset 0.0 -14.0 -6.0
-	PlacementCVars rs_ss_stow
-	UseHandOffsets
-	NOAUTOREVERSE
-	PitchOffset 90.0
-	RollOffset 0.0
-	AngleOffset 0.0
-	BaseFrame
+	UseActorPitch
+	UseActorRoll
+
+	FrameIndex SSTW A 0 0	FrameIndex SSTW A 1 0
+}
+
+// ---- the mount marker ----------------------------------------------------
+// HardPoints' wireframe diamond, so the shoulder mount reads the same way
+// every other anchor in the family does. Scale is in map units and the mesh is
+// radius 1, so this is the marker's real size.
+Model RS_ShieldMountMarker
+{
+	Path "models"
+	Model 0 "rs_ss_diamond.obj"
+	Scale 4.0 4.0 4.0
+	FrameIndex SSMK A 0 0
 }

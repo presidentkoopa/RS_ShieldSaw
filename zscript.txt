@@ -7,6 +7,7 @@
 // either hand, and it loads on its own.
 version "4.10"
 
+#include "zscript/rs_shieldsaw_mount.zs"
 #include "zscript/rs_shieldsaw_actors.zs"
 #include "zscript/rs_shieldsaw.zs"
 #include "zscript/rs_shieldsaw_state.zs"

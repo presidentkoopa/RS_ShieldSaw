@@ -28,6 +28,42 @@ user float rs_ss_cut_damage  = 1.0;
 // costs you the guard; that is the point.
 user bool  rs_ss_deflect     = true;
 
+// Whether the shield still deflects while it is STOWED on your forearm. On is
+// the point of the forearm mount; off means only a shield actually in your
+// hand blocks anything.
+user bool  rs_ss_deflect_stowed = true;
+
+// ---- the shoulder mount --------------------------------------------------
+// WHERE ON YOUR BACK the shield sits, and how close your off hand has to get
+// to take it. fwd is negative because the headset sits at your EYES, so your
+// own back is behind it; side is negative for the left shoulder; frac is a
+// fraction of eye height, and 0.86 is about shoulder.
+user float rs_ss_mount_fwd   = -7.0;
+user float rs_ss_mount_side  = -8.0;
+user float rs_ss_mount_frac  = 0.86;
+user float rs_ss_mount_reach = 9.0;
+
+// THE ANCHOR IS THE SHIELD'S TOP EDGE, NOT ITS CENTRE.
+//
+// Anchoring a disc this size by its middle parks it centred on your shoulder
+// blade -- a giant plate behind your head. Anchoring by the top instead lets
+// it hang down your back the way a slung shield actually does, while the point
+// you REACH for stays at a normal over-the-shoulder height.
+//
+// This is how far the disc's centre sits below that grab point. Roughly the
+// shield's own radius.
+user float rs_ss_mount_drop  = 11.0;
+
+user float rs_ss_mount_yaw   = 0.0;
+user float rs_ss_mount_pitch = 0.0;
+user float rs_ss_mount_roll  = 0.0;
+user float rs_ss_mount_scale = 1.0;
+
+// The wireframe diamond at the mount. 0 never, 1 while it matters (on your
+// back, or in your hand waiting to go back), 2 always. It is sized to the
+// reach radius, so the diamond IS the volume you have to put your hand in.
+user int   rs_ss_marker      = 1;
+
 // ---- forearm stow --------------------------------------------------------
 // The shield straps to your off forearm when it is not in your hand, and keeps
 // deflecting there. Off puts it back to vanishing into inventory.
@@ -62,3 +98,7 @@ user float rs_ss_held_yaw    = 0.0;
 user float rs_ss_held_pitch  = 0.0;
 user float rs_ss_held_roll   = 0.0;
 user float rs_ss_held_scale  = 1.0;
+
+// Print the gesture's decision on every grip edge, plus the raw button once a
+// second. Tells apart "the grip never registered" from "the arbiter refused".
+user bool  rs_ss_debug       = false;

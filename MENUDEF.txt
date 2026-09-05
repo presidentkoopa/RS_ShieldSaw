@@ -43,7 +43,27 @@ OptionMenu "RS_ShieldSaw_Options"
 	StaticText "below, then turn it off.", 2
 
 	StaticText ""
-	StaticText "Stowed on forearm", 1
+	StaticText "Shoulder mount", 1
+	StaticText "Reach your off hand over your shoulder and", 2
+	StaticText "squeeze to draw it. Release there to put it back.", 2
+	Slider "Back / forward",  "rs_ss_mount_fwd",   -24.0, 6.0, 0.5, 1
+	Slider "Left / right",    "rs_ss_mount_side",  -24.0, 24.0, 0.5, 1
+	Slider "Height",          "rs_ss_mount_frac",   0.4, 1.2, 0.01, 2
+	Slider "Reach radius",    "rs_ss_mount_reach",  3.0, 24.0, 0.5, 1
+	Slider "Hangs below grab","rs_ss_mount_drop",   0.0, 40.0, 0.5, 1
+	StaticText "You grab the TOP of the shield, so the disc", 2
+	StaticText "hangs below your hand instead of sitting", 2
+	StaticText "centred behind your head like a plate.", 2
+	Option "Show the mount",  "rs_ss_marker", "RS_SS_Marker"
+	StaticText "A wireframe diamond, sized to the reach.", 2
+	StaticText "It brightens when your hand is close enough.", 2
+	Slider "Yaw",             "rs_ss_mount_yaw",  -180.0, 180.0, 5.0, 0
+	Slider "Pitch",           "rs_ss_mount_pitch",-180.0, 180.0, 5.0, 0
+	Slider "Roll",            "rs_ss_mount_roll", -180.0, 180.0, 5.0, 0
+	Slider "Scale",           "rs_ss_mount_scale",  0.2, 3.0, 0.05, 2
+
+	StaticText ""
+	StaticText "Stowed on forearm (legacy)", 1
 	Slider "Left / Right",   "rs_ss_stow_ofs_x", -30.0, 30.0, 0.5, 1
 	Slider "Forward / Back", "rs_ss_stow_ofs_y", -30.0, 30.0, 0.5, 1
 	Slider "Down / Up",      "rs_ss_stow_ofs_z", -30.0, 30.0, 0.5, 1
@@ -76,9 +96,13 @@ OptionMenu "RS_ShieldSaw_Options"
 	StaticText ""
 	StaticText "Shield", 1
 	Option "Deflect projectiles", "rs_ss_deflect",   "OnOff"
+	Option "...also while stowed", "rs_ss_deflect_stowed", "OnOff"
 	Option "Hand model",          "rs_ss_handmodel", "OnOff"
 	Option "Start with it",       "rs_ss_start",     "OnOff"
 
 	StaticText ""
-	SafeCommand "Reset all", "resetcvar rs_ss_stow rs_ss_stow_place rs_ss_stow_ofs_x rs_ss_stow_ofs_y rs_ss_stow_ofs_z rs_ss_stow_yaw rs_ss_stow_pitch rs_ss_stow_roll rs_ss_stow_scale rs_ss_held_ofs_x rs_ss_held_ofs_y rs_ss_held_ofs_z rs_ss_held_yaw rs_ss_held_pitch rs_ss_held_roll rs_ss_held_scale rs_ss_locks rs_ss_lock_cone rs_ss_lock_range rs_ss_throw_speed rs_ss_cut_damage rs_ss_deflect rs_ss_handmodel rs_ss_start rs_ss_equip rs_ss_gesture"
+	Option "Gesture debug to console", "rs_ss_debug", "OnOff"
+
+	StaticText ""
+	SafeCommand "Reset all", "resetcvar rs_ss_stow rs_ss_stow_place rs_ss_stow_ofs_x rs_ss_stow_ofs_y rs_ss_stow_ofs_z rs_ss_stow_yaw rs_ss_stow_pitch rs_ss_stow_roll rs_ss_stow_scale rs_ss_held_ofs_x rs_ss_held_ofs_y rs_ss_held_ofs_z rs_ss_held_yaw rs_ss_held_pitch rs_ss_held_roll rs_ss_held_scale rs_ss_locks rs_ss_lock_cone rs_ss_lock_range rs_ss_throw_speed rs_ss_cut_damage rs_ss_deflect rs_ss_deflect_stowed rs_ss_handmodel rs_ss_start rs_ss_equip rs_ss_gesture"
 }

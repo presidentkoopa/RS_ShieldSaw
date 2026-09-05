@@ -7,14 +7,22 @@
 // Weapon on stock GZDoom, it works in either hand, and it is the only thing
 // in this mod so far.
 //
-// THREE VERBS.
-//   PASSIVE   while it is IN YOUR HAND, a deflector rides it and turns
-//             incoming projectiles back at whoever fired them.
-//   FIRE      hold: the saw deploys and grinds whatever it touches.
-//   ALT-FIRE  hold: sweep the hand across enemies to lock them, one marker
-//             each; release throws the shield, which cuts through every
-//             locked target in order, then returns to be caught.
-//             Tap alt while it is out to recall it early.
+// HOW IT PLAYS. The shield hangs on a mount over your off shoulder. Reach
+// your off hand back, squeeze, and it comes into that hand -- whatever was in
+// it is set aside. Attack and the disc grinds what it touches while the same
+// sweep paints anything further off. Let go and it flies the painted route,
+// cutting each in turn, and returns to the mount; your own weapon is back in
+// your hand the instant it leaves. Release at the mount instead and it just
+// goes back.
+//
+// ONE ATTACK INPUT, TWO JOBS. Holding the grip is what keeps the shield in
+// your hand, and a grip-held main fire arrives as alt-fire -- so there is
+// effectively one attack available. Rather than choose, it grinds and paints
+// at once.
+//
+// THE STATE MACHINE OWNS WHERE THE SHIELD IS, not this file. Nothing in a
+// weapon's own state table can tell the difference between "in your hand" and
+// "on your back", which is why every attack here asks A_ShieldDrawn first.
 //
 // WHAT CHANGED FROM THE ORIGINAL, and why:
 //
@@ -29,7 +37,12 @@
 //
 //   * Its deflector cleared bReflective when your own shot struck it and
 //     NEVER PUT IT BACK, so the first time you fired through your own shield
-//     it stopped deflecting for the rest of the level. Tick restores it.
+//     it stopped deflecting for the rest of the level. Tick restores it, and
+//     CanCollideWith now stops the collision outright.
+//
+//   * The seven fixed throw planes (RollOffset 0, +/-30, +/-60, +/-90, chosen
+//     by jumping to one of seven spawn states) are one continuous angle now:
+//     the wrist's roll at release, held for the whole flight.
 //
 //   * Motion throw was gated behind the oVRdrive mod being loaded
 //     (`shieldMotionThrow = !ovrdrive_loaded ? false : ...`). Dropped rather
@@ -39,8 +52,10 @@
 //   shield.md3     0 closed .. 3 fully open
 //   shieldsaw.md3  0 stowed, 1-4 deploying, 5-7 spinning
 //   hand.md3       frame 1
-// SSAW is the with-hand key, SSNH without. Both are MODELDEF lookups only --
-// there are no graphics behind either name.
+// SSAW is the with-hand key, SSNH without. The sprite frames behind them are
+// blank 1x1 images and they are LOAD-BEARING: Weapon::TryPickup refuses any
+// weapon whose Ready state has no valid sprite frame, so without them the
+// weapon compiles, loads, and can never be picked up.
 
 class RS_ShieldSaw : Weapon
 {
@@ -89,7 +104,15 @@ class RS_ShieldSaw : Weapon
 		+WEAPON.NOALERT
 		+WEAPON.NOAUTOAIM
 		+WEAPON.AMMO_OPTIONAL
+		// TWO DIFFERENT FLAGS, AND ONLY ONE OF THEM DOES THIS.
+		// NOAUTOSWITCHTO (WIF_NOAUTOSWITCHTO) keeps a weapon out of the
+		// autoswitch PICKER. NO_AUTO_SWITCH (WIF_NO_AUTO_SWITCH) is what
+		// Weapon::AttachToOwner actually reads before setting PendingWeapon on
+		// a give. Without the second one the shield equipped itself the moment
+		// it was granted -- in the hand while the state machine still said
+		// stowed, so it drew twice and the first throw lost the off-hand weapon.
 		+WEAPON.NOAUTOSWITCHTO
+		+WEAPON.NO_AUTO_SWITCH
 		Obituary "%o was cut down by a shield saw.";
 		Tag "Shield Saw";
 	}
@@ -153,6 +176,15 @@ class RS_ShieldSaw : Weapon
 	// ======================================================================
 	// upkeep
 	// ======================================================================
+
+	// The owner guard in Tick only covers "no owner". If the weapon itself is
+	// destroyed -- morph, ClearInventory -- Tick stops running entirely and the
+	// deflector is orphaned as an invisible +SHOOTABLE +REFLECTIVE actor.
+	override void OnDestroy()
+	{
+		if (deflector) { deflector.Destroy(); deflector = null; }
+		Super.OnDestroy();
+	}
 
 	override void Tick()
 	{
@@ -219,11 +251,20 @@ class RS_ShieldSaw : Weapon
 	// and it is what makes the throw a decision instead of a rotation.
 	private void holdDeflector()
 	{
-		// STOWED COUNTS. The whole point of the forearm mount is that the
-		// shield keeps working when it is not in your hand; gating this on
-		// isHeld() silently dropped the passive the instant you switched
-		// weapons, which contradicted the menu text and the cvar comment.
-		bool want = deflectOn && !flying;
+		// HELD OR STOWED, BUT NOT THROWN -- and only while the state machine
+		// agrees the shield exists somewhere on you. Throwing it is what costs
+		// you the guard, and that is the weapon's balance.
+		//
+		// rs_ss_deflect_stowed splits the two: on, the forearm keeps deflecting
+		// (the point of the mount); off, only a shield actually in your hand
+		// blocks anything, which is the stricter reading and the one to use if
+		// a permanent guard feels like too much.
+		bool want = deflectOn && !flying && isHeld();
+		if (!want && deflectOn && !flying && !isHeld())
+		{
+			let p = owner.player;
+			want = p && cvOn("rs_ss_deflect_stowed", p, true);
+		}
 
 		if (!want)
 		{
@@ -243,7 +284,12 @@ class RS_ShieldSaw : Weapon
 		bool held = isHeld();
 		Vector3 hp = held ? HandPos() : owner.OffhandPos;
 		double ang = held ? HandAngle() : (owner.OffhandAngle + 90.0);
-		Vector3 at = hp + (Actor.AngleToVector(ang, owner.radius * 0.5), 0);
+		// A FULL RADIUS CLEAR, PLUS SLACK. At half the pawn radius the hand sat
+		// INSIDE the guard's bounding box, and an actor whose box contains a
+		// trace origin is an intercept at frac 0 -- so every hitscan the player
+		// fired died at zero range, from any weapon. The guard is radius 10 now,
+		// so 18 units out puts the origin comfortably outside it.
+		Vector3 at = hp + (Actor.AngleToVector(ang, 18.0), 0);
 		deflector.SetOrigin(at - (0, 0, deflector.height * 0.5), false);
 		deflector.A_SetAngle(ang);
 	}
@@ -257,9 +303,26 @@ class RS_ShieldSaw : Weapon
 	// trace does not, and a saw held sideways should still cut.
 	const GRIND_RANGE = 48.0;
 
+	// STOWED MEANS STOWED. Nothing in the weapon's own state table can tell
+	// whether the shield is on your arm or in your hand -- the state machine
+	// owns that -- so every attack asks it first.
+	//
+	// Without this, any path that left the shield as OffhandWeapon while the
+	// state machine still said STOWED had it grinding continuously off the
+	// forearm: the psprite runs its Fire states as soon as it is the off-hand
+	// weapon, and the player never asked for it.
+	action bool A_ShieldDrawn()
+	{
+		if (!player) return false;
+		let st = RS_ShieldState.Get();
+		if (!st) return true;                       // no handler: do not block
+		return st.StateOf(invoker.owner.PlayerNumber()) == RS_ShieldState.SS_DRAWN;
+	}
+
 	action void A_ShieldGrind()
 	{
 		if (!player) return;
+		if (!A_ShieldDrawn()) return;
 		let pmo = player.mo;
 
 		// THRUSPECIES ON THE PUFF IS LOad-BEARING, not decoration. The trace
@@ -278,15 +341,20 @@ class RS_ShieldSaw : Weapon
 		double ang = pmo.angle;
 		int alf = ALF_PORTALRESTRICT | (invoker.bOffhandWeapon ? ALF_ISOFFHAND : 0);
 		double pitch = pmo.BulletSlope(null, alf);
-		double dmg   = 1 * invoker.cutDamage;
+		// LineAttack's damage parameter is an INT, and ZScript truncates. With
+		// a base of 1 the slider did nothing at all below 1.0 -- 0.2 through
+		// 0.9 all floored to zero damage, silently, and berserk multiplied zero
+		// by four. Scale from a base above 1 and round.
+		double dmg = 6 * invoker.cutDamage;
 		if (pmo.CountInv("PowerStrength")) dmg *= 4;
+		int idmg = max(1, int(round(dmg)));
 
 		// A FORWARD ARC, NOT A SPHERE. `i <= 12` at 30 degrees swept a full
 		// vertical circle -- straight up, straight down and straight backwards --
 		// and traced the forward direction twice into the bargain. Five steps of
 		// 22 degrees is the arc a disc held in front of you actually sweeps.
 		for (int i = -2; i <= 2; i++)
-			pmo.LineAttack(ang, GRIND_RANGE, pitch + i * 22, dmg,
+			pmo.LineAttack(ang, GRIND_RANGE, pitch + i * 22, idmg,
 			               'Melee', "RS_ShieldSawPuff", laflags);
 
 		level.VRHaptic(invoker.HandIndex(), 0.35, 30.0);
@@ -309,6 +377,7 @@ class RS_ShieldSaw : Weapon
 	// painted.
 	action void A_ShieldSweep()
 	{
+		if (!A_ShieldDrawn()) return;
 		invoker.acquire();
 	}
 
@@ -316,6 +385,11 @@ class RS_ShieldSaw : Weapon
 	{
 		if (!owner || !owner.player) return;
 		if (locks.Size() >= maxLocks) return;
+		// level.time RESETS TO 0 on a level change and this weapon persists in
+		// inventory, so a stamp from four minutes into the last map makes this
+		// difference hugely negative -- and the guard then holds for four
+		// minutes on the new map with no lock ever possible.
+		if (lastLockTic > level.time) lastLockTic = -100;
 		if (level.time - lastLockTic < 3) return;      // ~8 scans/sec
 		// Stamped HERE, not only on success: the guard above is the throttle, and
 		// leaving it un-stamped on a miss meant holding alt while pointing at
@@ -341,9 +415,14 @@ class RS_ShieldSaw : Weapon
 			if (pmo.Distance3D(mo) > lockRange) continue;
 			if (!pmo.CheckSight(mo)) continue;
 
-			double dAng   = absangle(ha, pmo.AngleTo(mo));
+			// FROM THE HAND, which is what the comment above always claimed.
+			// pmo.AngleTo takes the bearing from the PAWN CENTRE, and in VR the
+			// hand is 10-20 units off it -- about 8-11 degrees of error at 100
+			// units, against a 14 degree cone. Close targets simply would not
+			// lock, or the wrong one won.
+			double dAng   = absangle(ha, VectorAngle(mo.pos.x - hp.x, mo.pos.y - hp.y));
 			double tPitch = -atan2((mo.pos.z + mo.height * 0.5) - hp.z,
-			                       max(1.0, pmo.Distance2D(mo)));
+			                       max(1.0, (mo.pos.xy - hp.xy).Length()));
 			// tPitch is ALREADY playsim convention (positive = down), same as
 			// PitchTo returns, and hpit is too now that HandPitch negates. The
 			// old -hpit/-tPitch pair made this a SUM, so a target 10 degrees up
@@ -378,10 +457,25 @@ class RS_ShieldSaw : Weapon
 	// THE LAUNCH, as a plain method: the grip release is detected by the state
 	// machine, not by a weapon state, so this has to be callable from outside
 	// an action context.
+	// The release edge is already spent by the time we get here, so a failed
+	// launch that just returned left the shield in the hand with no gesture
+	// able to reach it. Reachable: SpawnPlayerMissile returns null when the
+	// spawn point is inside geometry, which is what throwing with your arm
+	// through a wall does.
+	private void failLaunch()
+	{
+		let st = RS_ShieldState.Get();
+		if (st && owner) st.LaunchFailed(owner.PlayerNumber());
+	}
+
 	void LaunchNow()
 	{
 		if (!owner || !owner.player || flying) return;
 		let p = owner.player;
+
+		// #8: the grind's looping idle belongs to a state sequence we are about
+		// to abandon when the previous weapon is raised.
+		owner.A_StopSound(HandChan());
 
 		// THE GUARD HAS TO GO FIRST. It sits 8 units off the hand with radius
 		// 16; the missile spawns ~11 units out with radius 12, so they overlap,
@@ -391,13 +485,13 @@ class RS_ShieldSaw : Weapon
 
 		int alflags = bOffhandWeapon ? ALF_ISOFFHAND : 0;
 		Actor sh = owner.SpawnPlayerMissile("RS_ShieldInFlight", aimflags: alflags);
-		if (!sh) { ClearLocks(); return; }
+		if (!sh) { ClearLocks(); failLaunch(); return; }
 
 		// Cast BEFORE claiming `flying`: SpawnPlayerMissile allows replacement,
 		// so a `replaces` in the load order makes this null, and assigning
 		// flying first would strand the weapon.
 		let f = RS_ShieldInFlight(sh);
-		if (!f) { sh.Destroy(); ClearLocks(); return; }
+		if (!f) { sh.Destroy(); ClearLocks(); failLaunch(); return; }
 
 		flying = sh;
 		sh.master = owner;
@@ -405,6 +499,12 @@ class RS_ShieldSaw : Weapon
 
 		f.launcher  = self;
 		f.hand      = HandIndex();
+
+		// THE PLANE COMES FROM YOUR WRIST. OffhandRoll is the raw controller
+		// roll, so throwing sidearm sends the disc round sidearm and overhand
+		// sends it vertical -- the shield flies in the plane you threw it in.
+		f.throwRoll = bOffhandWeapon ? owner.OffhandRoll : owner.MainHandRoll;
+		f.roll      = f.throwRoll;
 		f.speedMult = throwSpeed;
 		f.dmgMult   = cutDamage;
 
@@ -422,11 +522,6 @@ class RS_ShieldSaw : Weapon
 		if (st) st.Thrown(owner.PlayerNumber());
 	}
 
-	action void A_ShieldRecall()
-	{
-		let f = RS_ShieldInFlight(invoker.flying);
-		if (f) f.GoHome();
-	}
 
 	// THE SHIELD DOES NOT COME BACK TO YOUR HAND. It returns to the forearm
 	// it was drawn from -- by then you are holding whatever you were holding
@@ -446,11 +541,6 @@ class RS_ShieldSaw : Weapon
 	// Returns a state rather than setting one: SetWeaponState is an RLVR
 	// helper off DoomWeaponZ and this weapon does not have that base. An
 	// anonymous state function returning a state is the stock way.
-	action State A_ShieldWaitCheck()
-	{
-		if (!invoker.flying) return ResolveState("Ready");
-		return ResolveState(null);
-	}
 
 	// HAND MODEL ON OR OFF, EVERY TIC.
 	//
@@ -462,7 +552,6 @@ class RS_ShieldSaw : Weapon
 	// whole state table.
 	private void applyModel()
 	{
-		if (!handModel) {} // read once, below
 		let p = owner.player;
 		if (!p) return;
 		if (p.ReadyWeapon != self && p.OffhandWeapon != self) return;
@@ -491,6 +580,7 @@ class RS_ShieldSaw : Weapon
 	Fire:
 	AltFire:
 		SSAW A 0 A_JumpIf(invoker.flying != null, "Ready");
+		SSAW A 0 { if (!A_ShieldDrawn()) return ResolveState("Ready"); return ResolveState(null); }
 		SSAW A 0 A_StartSound("rsshield/raise", invoker.HandChan());
 		SSAW BCDE 2;                                    // saw deploys
 	GrindLoop:
@@ -501,17 +591,11 @@ class RS_ShieldSaw : Weapon
 		SSAW EDCB 2;                                    // saw stows
 		Goto Ready;
 
-	WaitReturn:
-		SSAW A 1
-		{
-			A_WeaponReady(WRF_ALLOWRELOAD | WRF_ALLOWZOOM);
-			return A_ShieldWaitCheck();
-		}
-		Loop;
-
-	Recall:
-		SSAW A 2 A_ShieldRecall();
-		Goto WaitReturn;
+	// NO Recall/WaitReturn STATES. During flight the shield is not the
+	// OffhandWeapon -- Thrown() puts your own weapon back the instant it
+	// leaves -- so this state table is not running at all and anything here
+	// could never fire. Recall is driven from the state machine instead: a
+	// grip press while FLYING sends rs-ss-recall.
 
 	// The engine warns about MODELDEF sprites no state references.
 	Placeholder:

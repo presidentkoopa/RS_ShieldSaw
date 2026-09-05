@@ -7,7 +7,7 @@ addslotdefault 1 RS_ShieldSaw
 // today because it wants to be an ARM GESTURE and that needs hand velocity
 // from the engine. The binding stays either way -- a gesture should not be the
 // only way to reach a weapon.
-alias rs_shieldsaw_draw "netevent rs-ss-draw"
+alias rs_shieldsaw_draw "netevent rs-ss-toggle"
 defaultbind X rs_shieldsaw_draw
 
 // addmenukey needs a section to hang under; without addkeysection first the
