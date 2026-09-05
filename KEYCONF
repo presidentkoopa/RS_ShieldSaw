@@ -1,4 +1,7 @@
-// addslotdefault APPENDS. `setslot 1 RS_ShieldSaw` replaces the whole slot and
-// silently takes the fist and chainsaw away from every other mod in the order.
-weaponsection "RS_ShieldSaw"
+// addslotdefault APPENDS; setslot would clear the slot and take Fist and
+// Chainsaw away from every other mod in the load order.
+//
+// No `weaponsection` -- that names an ini section for slot storage and is for
+// a mod replacing the whole arsenal. For a single weapon it just adds a way
+// for the slot config to go missing.
 addslotdefault 1 RS_ShieldSaw

@@ -63,6 +63,12 @@ class RS_ShieldSaw : Weapon
 
 	Default
 	{
+		// THE WEAPON DECLARES ITS OWN SLOT. KEYCONF's addslotdefault did not
+		// take -- the weapon ended up in inventory and in no slot, so it could
+		// not be selected at all. SlotNumber is merged into the default slot
+		// set by the engine and does not clear the slot the way setslot does.
+		Weapon.SlotNumber 1;
+		Weapon.SlotPriority 0.9;
 		Weapon.SelectionOrder 3700;
 		Weapon.Kickback 100;
 		Weapon.AmmoUse 0;

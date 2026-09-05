@@ -142,7 +142,16 @@ class RS_ShieldStowHandler : EventHandler
 
 
 		if (cvOn("rs_ss_start", p, true) && !pmo.FindInventory("RS_ShieldSaw"))
+		{
 			pmo.GiveInventory("RS_ShieldSaw", 1);
+
+			// REBUILD THE SLOT TABLE. It is assembled once during player setup,
+			// which happens BEFORE this grant -- so the weapon landed in
+			// inventory and in no slot at all, and pressing 1 could never reach
+			// it. Weapon.SlotNumber alone does not help: it feeds the table
+			// that was already built.
+			WeaponSlots.SetupWeaponSlots(pmo);
+		}
 
 	}
 }
