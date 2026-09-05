@@ -42,6 +42,55 @@ class RS_ShieldState : EventHandler
 
 	static RS_ShieldState Get() { return RS_ShieldState(EventHandler.Find("RS_ShieldState")); }
 
+	// ======================================================================
+	// THE GRIP ARBITER, and why a universal mod must not skip it
+	// ======================================================================
+	//
+	// Reading GripHeldOff raw is correct for "is the button down" and WRONG as
+	// a trigger, because the off-hand grip is not ours. RS_Hands closes it on
+	// world objects, RS_Reload on a magazine, RS_Holsters on the chest pouch --
+	// so grabbing a health pack, pulling a mag or reaching for the pouch would
+	// each yank the shield off your forearm.
+	//
+	// The arbiter answers "is this hand free". It is a Service, found by
+	// STRING, so there is no compile-time link in either direction and this mod
+	// still loads and works alone -- which is the whole reason it is a Service
+	// and not an EventHandler (EventHandler.Find on a literal is resolved at
+	// compile time and a miss is fatal AND global, killing every pk3 after it).
+	//
+	// A hit is not proof of identity either: ServiceIterator matching is a
+	// case-insensitive SUBSTRING test, so anything whose class name merely
+	// CONTAINS the text comes back too. grip.hello is the handshake that
+	// settles it.
+	const ARB_NAME = "RS_ShieldSaw";
+
+	private Service findArbiter()
+	{
+		ServiceIterator it = ServiceIterator.Find("RS_GripArbiterService");
+		Service sv;
+		while (sv = it.Next())
+			if (sv.GetInt("grip.hello", "", 0, 0, null, 'None') == 1) return sv;
+		return null;
+	}
+
+	// Free means: no arbiter loaded at all (we are running alone -- assume
+	// free), or the arbiter says nobody holds the off hand, or we hold it.
+	private bool offHandFree(PlayerPawn pmo)
+	{
+		let sv = findArbiter();
+		if (!sv) return true;
+		if (sv.GetInt("grip.mine", "", 1, 0, pmo, ARB_NAME) == 1) return true;
+		return sv.GetInt("grip.subject", "", 1, 0, pmo, ARB_NAME) == 0;
+	}
+
+	private void claimOffHand(PlayerPawn pmo, bool want)
+	{
+		let sv = findArbiter();
+		if (!sv) return;
+		if (want) sv.GetInt("grip.claim", "", 1, GRIPSUBJ_Grip, pmo, ARB_NAME);
+		else      sv.GetInt("grip.release", "", 1, 0, pmo, ARB_NAME);
+	}
+
 	// THE MOTION HALF OF THE GESTURE, AND THE ONE THING STILL STUBBED.
 	//
 	// The grip half is native -- GripHeldOff is the raw squeeze, engine-owned,
@@ -295,7 +344,13 @@ class RS_ShieldState : EventHandler
 
 		if (grip && !was)                       // pressed
 		{
-			if (mState[pnum] == SS_STOWED) Draw(pnum);
+			// Only if nothing else is using that hand. A grab, a reload or a
+			// reach into the pouch is not a request for the shield.
+			if (mState[pnum] == SS_STOWED && offHandFree(pmo))
+			{
+				Draw(pnum);
+				claimOffHand(pmo, true);
+			}
 		}
 		else if (!grip && was)                  // released
 		{
@@ -303,6 +358,7 @@ class RS_ShieldState : EventHandler
 			{
 				if (HandMoving(pmo)) ThrowNow(pnum);
 				else Stow(pnum);
+				claimOffHand(pmo, false);
 			}
 		}
 	}
