@@ -106,11 +106,13 @@ class RS_ShieldInFlight : Actor
 		steerHome();
 	}
 
+	// HOME IS THE FOREARM. The shield returns to where it was stowed, not to
+	// the hand -- by the time it lands you are holding your own weapon again.
 	private void steerHome()
 	{
 		if (!master) { Destroy(); return; }
 		if (!homing) cutThisLeg.Clear();
-		Vector3 hp = (hand != 0) ? master.OffhandPos : master.AttackPos;
+		Vector3 hp = master.OffhandPos;
 		double ang = atan2(hp.y - pos.y, hp.x - pos.x);
 		double pit = -atan2(hp.z - pos.z, max(1.0, (hp.xy - pos.xy).Length()));
 		Vel3DFromAngle(Speed * speedMult * 1.6, ang, pit);
@@ -138,7 +140,7 @@ class RS_ShieldInFlight : Actor
 			// shield steps straight past the hand and orbits.
 			if (Level.Vec3Diff(pos, hp).Length() < max(40.0, vel.Length() * 1.2))
 			{
-				if (launcher) launcher.Caught();
+				if (launcher) launcher.Landed();
 				master.A_StartSound("rsshield/hit", CHAN_BODY);
 				Destroy();
 				return;
@@ -165,7 +167,7 @@ class RS_ShieldInFlight : Actor
 		// Last resort. Whatever went wrong, the shield comes back.
 		if (++age > 35 * 12)
 		{
-			if (launcher) launcher.Caught();
+			if (launcher) launcher.Landed();
 			Destroy();
 			return;
 		}

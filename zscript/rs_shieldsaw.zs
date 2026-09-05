@@ -74,6 +74,17 @@ class RS_ShieldSaw : Weapon
 		Weapon.AmmoUse 0;
 		Weapon.AmmoGive 0;
 		Inventory.PickupMessage "You got the Shield Saw!";
+		// AN OFF-HAND WEAPON. It lives on the off arm: held in that hand, and
+		// strapped to that forearm when it is not. PlayerPawn.BringUpWeapon
+		// reads bOffhandWeapon and routes the weapon to player.OffhandWeapon,
+		// so this flag is what puts it in the right hand rather than any code
+		// on our side.
+		//
+		// NOHANDSWITCH keeps it there: without it the weapon can be moved to
+		// the main hand, and everything about this design -- the forearm stow,
+		// the deflector's placement -- assumes one arm.
+		+WEAPON.OFFHANDWEAPON
+		+WEAPON.NOHANDSWITCH
 		+WEAPON.MELEEWEAPON
 		+WEAPON.NOALERT
 		+WEAPON.NOAUTOAIM
@@ -287,6 +298,15 @@ class RS_ShieldSaw : Weapon
 	//
 	// The cone is measured from the HAND, not the eye. Pointing the shield is
 	// the gesture, and in VR those are two different directions.
+	// ONE INPUT, BOTH JOBS.
+	//
+	// Holding the grip is what keeps the shield in your hand, and in this
+	// control scheme a grip-held main fire arrives as alt-fire -- so there is
+	// effectively ONE attack input available while the shield is out. Rather
+	// than pick between grinding and aiming, it does both: the disc cuts what
+	// it physically passes through, and the same sweep paints anything further
+	// off that you point at. Release the grip and the throw visits what you
+	// painted.
 	action void A_ShieldSweep()
 	{
 		invoker.acquire();
@@ -355,47 +375,51 @@ class RS_ShieldSaw : Weapon
 	// the throw
 	// ======================================================================
 
-	action void A_ShieldThrow()
+	// THE LAUNCH, as a plain method: the grip release is detected by the state
+	// machine, not by a weapon state, so this has to be callable from outside
+	// an action context.
+	void LaunchNow()
 	{
-		if (!player || invoker.flying) return;
+		if (!owner || !owner.player || flying) return;
+		let p = owner.player;
 
-		// THE GUARD HAS TO GO FIRST. It sits 8 units off the hand with radius 16;
-		// the missile spawns ~11 units out with radius 12, so they overlap, the
-		// spawn-time P_TryMove fails against a SHOOTABLE DONTRIP actor, and
-		// P_SpawnPlayerMissile explodes it and hands back NULL. holdDeflector
-		// would not tear it down until the next tic, which is a tic too late:
-		// the throw silently did nothing at all.
-		if (invoker.deflector) { invoker.deflector.Destroy(); invoker.deflector = null; }
+		// THE GUARD HAS TO GO FIRST. It sits 8 units off the hand with radius
+		// 16; the missile spawns ~11 units out with radius 12, so they overlap,
+		// the spawn-time P_TryMove fails against a SHOOTABLE DONTRIP actor, and
+		// P_SpawnPlayerMissile explodes it and hands back NULL.
+		if (deflector) { deflector.Destroy(); deflector = null; }
 
-		int alflags = invoker.bOffhandWeapon ? ALF_ISOFFHAND : 0;
-		Actor sh = SpawnPlayerMissile("RS_ShieldInFlight", aimflags: alflags);
-		if (!sh) { invoker.ClearLocks(); return; }
+		int alflags = bOffhandWeapon ? ALF_ISOFFHAND : 0;
+		Actor sh = owner.SpawnPlayerMissile("RS_ShieldInFlight", aimflags: alflags);
+		if (!sh) { ClearLocks(); return; }
 
-		// Cast BEFORE claiming `flying`. SpawnPlayerMissile allows replacement,
-		// so a `replaces RS_ShieldInFlight` in the load order makes this null --
-		// and assigning flying first would strand the weapon in WaitReturn.
+		// Cast BEFORE claiming `flying`: SpawnPlayerMissile allows replacement,
+		// so a `replaces` in the load order makes this null, and assigning
+		// flying first would strand the weapon.
 		let f = RS_ShieldInFlight(sh);
-		if (!f) { sh.Destroy(); invoker.ClearLocks(); return; }
+		if (!f) { sh.Destroy(); ClearLocks(); return; }
 
-		invoker.flying = sh;
-		sh.master = invoker.owner;
-		sh.target = invoker.owner;
+		flying = sh;
+		sh.master = owner;
+		sh.target = owner;
 
-		f.launcher  = invoker;
-		f.hand      = invoker.HandIndex();
-		f.speedMult = invoker.throwSpeed;
-		f.dmgMult   = invoker.cutDamage;
+		f.launcher  = self;
+		f.hand      = HandIndex();
+		f.speedMult = throwSpeed;
+		f.dmgMult   = cutDamage;
 
-		// Hand the route over; the flight actor owns it from here, so the
-		// weapon never has to steer anything.
-		for (int i = 0; i < invoker.locks.Size(); i++)
-			f.route.Push(invoker.locks[i]);
+		for (int i = 0; i < locks.Size(); i++)
+			f.route.Push(locks[i]);
 
 		f.Launch();
 
-		A_StartSound("rsshield/throw", invoker.HandChan());
-		A_AlertMonsters(640);
-		level.VRHaptic(invoker.HandIndex(), 0.8, 60.0);
+		owner.A_StartSound("rsshield/throw", HandChan());
+		owner.A_AlertMonsters(640);
+		level.VRHaptic(HandIndex(), 0.8, 60.0);
+
+		// Your previous weapon comes back NOW, not when the shield lands.
+		let st = RS_ShieldState.Get();
+		if (st) st.Thrown(owner.PlayerNumber());
 	}
 
 	action void A_ShieldRecall()
@@ -404,16 +428,19 @@ class RS_ShieldSaw : Weapon
 		if (f) f.GoHome();
 	}
 
-	// Called by the flight actor when it reaches the hand.
-	void Caught()
+	// THE SHIELD DOES NOT COME BACK TO YOUR HAND. It returns to the forearm
+	// it was drawn from -- by then you are holding whatever you were holding
+	// before, and putting it back in your hand would take that away again.
+	//
+	// This also removes the catch window entirely, which was a tuning problem
+	// with no good answer: too tight and you drop it, too loose and it snaps
+	// to you from across the room.
+	void Landed()
 	{
 		flying = null;
 		ClearLocks();
-		if (owner)
-		{
-			owner.A_StartSound("rsshield/raise", HandChan());
-			level.VRHaptic(HandIndex(), 1.0, 70.0);
-		}
+		let st = RS_ShieldState.Get();
+		if (st && owner) st.Landed(owner.PlayerNumber());
 	}
 
 	// Returns a state rather than setting one: SetWeaponState is an RLVR
@@ -460,30 +487,19 @@ class RS_ShieldSaw : Weapon
 		SSAW A 1 A_Raise(160);
 		Loop;
 
-	// ---- grind -----------------------------------------------------------
+	// ---- grind and paint, together ---------------------------------------
 	Fire:
+	AltFire:
 		SSAW A 0 A_JumpIf(invoker.flying != null, "Ready");
 		SSAW A 0 A_StartSound("rsshield/raise", invoker.HandChan());
 		SSAW BCDE 2;                                    // saw deploys
 	GrindLoop:
 		SSAW A 0 A_StartSound("rsshield/idle", invoker.HandChan(), CHANF_LOOPING);
-		SSAW FGH 1 A_ShieldGrind();
+		SSAW FGH 1 { A_ShieldGrind(); A_ShieldSweep(); }
 		SSAW A 0 A_ReFire("GrindLoop");
 		SSAW A 0 A_StopSound(invoker.HandChan());
 		SSAW EDCB 2;                                    // saw stows
 		Goto Ready;
-
-	// ---- lock and throw --------------------------------------------------
-	AltFire:
-		SSAW A 0 A_JumpIf(invoker.flying != null, "Recall");
-		SSAW BCDE 2;
-		SSAW A 0 A_StartSound("rsshield/idle", invoker.HandChan(), CHANF_LOOPING);
-	SweepLoop:
-		SSAW FGH 1 A_ShieldSweep();
-		SSAW A 0 A_ReFire("SweepLoop");
-		SSAW A 0 A_StopSound(invoker.HandChan());
-		SSAW H 2 A_ShieldThrow();
-		Goto WaitReturn;
 
 	WaitReturn:
 		SSAW A 1

@@ -3,9 +3,13 @@
 // Start the game with it, no pickup needed.
 user bool  rs_ss_start       = true;
 
-// And with it already in your hand. Slot 1 holds Fist, Shield Saw and
-// Chainsaw, so without this "press 1" lands on the fist.
-user bool  rs_ss_equip       = true;
+// Drive the sequence from the off-hand GRIP: squeeze to draw it off the
+// forearm, hold to keep it, release to throw. Off falls back to the bound key.
+user bool  rs_ss_gesture     = true;
+
+// Start it already DRAWN rather than stowed. Off by default: stowed is the
+// resting state and the one the draw/grind/throw sequence begins from.
+user bool  rs_ss_equip       = false;
 
 // Hand model on the held shield.
 user bool  rs_ss_handmodel   = true;

@@ -1,0 +1,3 @@
+[enu default]
+
+RS_SS_DRAW = "Draw Shield Saw";

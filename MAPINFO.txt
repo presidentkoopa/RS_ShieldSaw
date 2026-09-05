@@ -2,5 +2,5 @@
 // this coexists with anything else loaded.
 GameInfo
 {
-	AddEventHandlers = "RS_ShieldStowHandler"
+	AddEventHandlers = "RS_ShieldState"
 }

@@ -20,6 +20,18 @@ OptionMenu "RS_ShieldSaw_Options"
 	Title "SHIELD SAW"
 
 	StaticText ""
+	StaticText "The sequence", 1
+	StaticText "Stowed on your off forearm, deflecting. Draw it", 2
+	StaticText "into your off hand (bind Draw Shield Saw in", 2
+	StaticText "Customize Controls), grind, then throw. Your", 2
+	StaticText "previous off-hand weapon returns the instant it", 2
+	StaticText "leaves, and the shield flies back to the forearm.", 2
+	Option "Grip gesture", "rs_ss_gesture", "OnOff"
+	StaticText "Squeeze the off-hand grip to draw it off your", 2
+	StaticText "forearm, hold to keep it, release to throw.", 2
+	Option "Start drawn instead of stowed", "rs_ss_equip", "OnOff"
+
+	StaticText ""
 	StaticText "Forearm", 1
 	Option "Strap to off forearm when stowed", "rs_ss_stow", "OnOff"
 	StaticText "Keeps deflecting there instead of", 2
@@ -66,8 +78,7 @@ OptionMenu "RS_ShieldSaw_Options"
 	Option "Deflect projectiles", "rs_ss_deflect",   "OnOff"
 	Option "Hand model",          "rs_ss_handmodel", "OnOff"
 	Option "Start with it",       "rs_ss_start",     "OnOff"
-	Option "Start holding it",    "rs_ss_equip",     "OnOff"
 
 	StaticText ""
-	SafeCommand "Reset all", "resetcvar rs_ss_stow rs_ss_stow_place rs_ss_stow_ofs_x rs_ss_stow_ofs_y rs_ss_stow_ofs_z rs_ss_stow_yaw rs_ss_stow_pitch rs_ss_stow_roll rs_ss_stow_scale rs_ss_held_ofs_x rs_ss_held_ofs_y rs_ss_held_ofs_z rs_ss_held_yaw rs_ss_held_pitch rs_ss_held_roll rs_ss_held_scale rs_ss_locks rs_ss_lock_cone rs_ss_lock_range rs_ss_throw_speed rs_ss_cut_damage rs_ss_deflect rs_ss_handmodel rs_ss_start rs_ss_equip"
+	SafeCommand "Reset all", "resetcvar rs_ss_stow rs_ss_stow_place rs_ss_stow_ofs_x rs_ss_stow_ofs_y rs_ss_stow_ofs_z rs_ss_stow_yaw rs_ss_stow_pitch rs_ss_stow_roll rs_ss_stow_scale rs_ss_held_ofs_x rs_ss_held_ofs_y rs_ss_held_ofs_z rs_ss_held_yaw rs_ss_held_pitch rs_ss_held_roll rs_ss_held_scale rs_ss_locks rs_ss_lock_cone rs_ss_lock_range rs_ss_throw_speed rs_ss_cut_damage rs_ss_deflect rs_ss_handmodel rs_ss_start rs_ss_equip rs_ss_gesture"
 }
