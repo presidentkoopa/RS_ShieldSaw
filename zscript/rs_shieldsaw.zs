@@ -288,10 +288,15 @@ class RS_ShieldSaw : Weapon
 		bool held = isHeld();
 		Vector3 hp;
 		double  ang;
+		// WHERE THE GUARD SITS, RELATIVE TO ITS FACING -- almost always the
+		// same as ang (straight out from the anchor), except forearm-stowed
+		// below, which needs to disagree with its own facing on purpose.
+		double  offAng;
 		if (held)
 		{
-			hp  = HandPos();
-			ang = HandAngle();
+			hp     = HandPos();
+			ang    = HandAngle();
+			offAng = ang;
 		}
 		else
 		{
@@ -300,6 +305,19 @@ class RS_ShieldSaw : Weapon
 			{
 				hp  = owner.OffhandPos;
 				ang = owner.OffhandAngle + 90.0;
+
+				// SIDEWAYS, NOT DOWNRANGE. ang here is not just a facing --
+				// it IS the off hand's live aim direction, the same line its
+				// own weapon fires along (see HandAngle/A_ShieldGrind's use
+				// of OffhandAngle for the same hand). Offsetting the guard
+				// 18 units straight out along ang, like every other case
+				// here does, plants the invisible hitbox dead in that
+				// muzzle's path -- every offhand shot ran into its own
+				// shield at point-blank range and got eaten or reflected.
+				// The guard is +INVISIBLE, so moving its collision off the
+				// firing line costs nothing visually; the model on the arm
+				// does not move.
+				offAng = ang + 90.0;
 			}
 			else
 			{
@@ -310,7 +328,8 @@ class RS_ShieldSaw : Weapon
 				hp.z -= cvNum("rs_ss_mount_drop", p, 11.0);
 				// No hand angle exists at a shoulder blade; face the guard
 				// outward with the body, same as the model's own yaw.
-				ang = owner.angle + cvNum("rs_ss_mount_yaw", p, 0.0) + 90.0;
+				ang    = owner.angle + cvNum("rs_ss_mount_yaw", p, 0.0) + 90.0;
+				offAng = ang;
 			}
 		}
 		// A FULL RADIUS CLEAR, PLUS SLACK. At half the pawn radius the hand sat
@@ -318,7 +337,7 @@ class RS_ShieldSaw : Weapon
 		// trace origin is an intercept at frac 0 -- so every hitscan the player
 		// fired died at zero range, from any weapon. The guard is radius 10 now,
 		// so 18 units out puts the origin comfortably outside it.
-		Vector3 at = hp + (Actor.AngleToVector(ang, 18.0), 0);
+		Vector3 at = hp + (Actor.AngleToVector(offAng, 18.0), 0);
 		deflector.SetOrigin(at - (0, 0, deflector.height * 0.5), false);
 		deflector.A_SetAngle(ang);
 	}
