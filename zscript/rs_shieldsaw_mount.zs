@@ -1,11 +1,12 @@
 // THE SHIELD ON YOUR BACK, AND REACHING OVER YOUR SHOULDER FOR IT.
 //
-// This replaces the forearm psprite. The forearm was the wrong mount for two
-// reasons that only showed up in a headset: a shield big enough to read as a
-// shield covers the arm you need to see, and -- worse -- ANY grip squeeze was
-// the draw, so the shield fought RS_Hands for every health pack you picked up.
+// This originally replaced the forearm psprite outright. The forearm was the
+// wrong mount for two reasons that only showed up in a headset: a shield big
+// enough to read as a shield covers the arm you need to see, and -- worse --
+// ANY grip squeeze was the draw, so the shield fought RS_Hands for every
+// health pack you picked up.
 //
-// A dedicated anchor fixes both. The draw is now a PLACE, not a button: put
+// A dedicated anchor fixed both. The draw became a PLACE, not a button: put
 // your off hand over your own shoulder and squeeze. Nothing else in the game
 // wants that spot, so there is nothing to arbitrate with.
 //
@@ -15,8 +16,20 @@
 // all nine of its anchors -- and 35Hz placement is fine for something sitting
 // on your back that you never look straight at.
 //
-// WHAT THIS COSTS: the shield no longer deflects while stowed. It is behind
-// you. That was the forearm's one real advantage and it goes with the mount.
+// rs_ss_mount_mode BRINGS THE FOREARM BACK AS AN OPTION, not a replacement.
+// The RS_GripArbiterService's grip.subject check -- added after the forearm
+// was scrapped, and what offHandFree() in rs_shieldsaw_state.zs now leans on
+// for the shoulder gesture too -- was the piece that was actually missing the
+// first time: a grip that closes on nothing (GRIPSUBJ_None) is the gesture, a
+// grip that closes on a health pack or a magazine is somebody else's, and the
+// arbiter can already tell them apart. With that in place the forearm no
+// longer fights RS_Hands for anything. The one cost that survives is the one
+// that was never a logic bug: a shield strapped to your own forearm still
+// covers the arm you're looking at. RS_ShieldForearmActor below is a
+// FollowOffHand world prop -- draw-rate placement, like every other prop that
+// rides a moving hand -- rather than the old psprite, and rs_shieldsaw.zs's
+// holdDeflector() now places the passive guard at whichever of the two spots
+// the shield actually is.
 
 class RS_ShieldMount
 {
@@ -71,6 +84,40 @@ class RS_ShieldStowActor : Actor
 		// The mount decides the angle every tic; without these the model would
 		// ignore the pitch and roll that lie it flat against your back.
 		+FORCEXYBILLBOARD
+	}
+	States
+	{
+	Spawn:
+		SSTW A -1;
+		Stop;
+	}
+}
+
+// THE SHIELD RIDING YOUR OWN OFF FOREARM, when rs_ss_mount_mode picks that
+// over the shoulder. Unlike RS_ShieldStowActor this is never SetOrigin'd into
+// a computed world point -- FollowOffHand puts it in the off controller's
+// render frame and resolves it at draw rate, the same trick RS_ShieldSawProp
+// uses while the shield is actually held. rs_shieldsaw_state.zs still calls
+// SetOrigin once a tic to keep the ACTOR (not the drawn model) somewhere
+// sensible for culling, sound origin, and Distance-based checks -- that call
+// never fights the renderer because the renderer never reads this actor's
+// position for a FollowOffHand model.
+//
+// Local placement -- the offset and rotation within the hand's own frame --
+// is rs_ss_stow_ofs_x/y/z/yaw/pitch/roll/scale, read live by MODELDEF's
+// PlacementCVars. Those cvars used to be wired to nothing (the "(legacy)"
+// menu label was accurate); this is what makes them live again.
+class RS_ShieldForearmActor : Actor
+{
+	Default
+	{
+		Radius 1;
+		Height 1;
+		+NOINTERACTION
+		+NOBLOCKMAP
+		+NOGRAVITY
+		+NOTONAUTOMAP
+		+DONTSPLASH
 	}
 	States
 	{

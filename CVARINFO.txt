@@ -23,13 +23,24 @@ user float rs_ss_lock_range  = 1200.0;
 user float rs_ss_throw_speed = 1.0;
 user float rs_ss_cut_damage  = 1.0;
 
+// HOW FAST YOUR HAND HAS TO BE MOVING, in map units per second (NOT per tic --
+// see HandMoving() in rs_shieldsaw_state.zs), for a release away from the
+// mount to count as a throw instead of just putting it down. Below this, a
+// release reads as "I let go without meaning to send it anywhere" and the
+// shield goes back to the mount instead of flying off a slow, careless
+// release. In forearm mode this is the ONLY thing that decides throw vs.
+// stow, since the forearm has no separate "put it back" spot to release at.
+// vr_vunits_per_meter is ~34 by default, so 25 is a shade under 3/4 m/s.
+user float rs_ss_throw_min   = 25.0;
+
 // ---- passive -------------------------------------------------------------
 // The deflector exists only while the shield is IN YOUR HAND. Throwing it
 // costs you the guard; that is the point.
 user bool  rs_ss_deflect     = true;
 
-// Whether the shield still deflects while it is STOWED on your forearm. On is
-// the point of the forearm mount; off means only a shield actually in your
+// Whether the shield still deflects while STOWED -- on the off forearm or the
+// shoulder, whichever rs_ss_mount_mode has it on. On is the point of a mount
+// you can leave a guard sitting on; off means only a shield actually in your
 // hand blocks anything.
 user bool  rs_ss_deflect_stowed = true;
 
@@ -64,9 +75,25 @@ user float rs_ss_mount_scale = 1.0;
 // reach radius, so the diamond IS the volume you have to put your hand in.
 user int   rs_ss_marker      = 1;
 
-// ---- forearm stow --------------------------------------------------------
-// The shield straps to your off forearm when it is not in your hand, and keeps
-// deflecting there. Off puts it back to vanishing into inventory.
+// ---- mount: shoulder or forearm -------------------------------------------
+// 0 shoulder (default): a world anchor over your off shoulder, reached by
+//   placing your off hand there -- see the "Shoulder mount" section below.
+// 1 forearm: the shield rides your own off hand directly, always drawn,
+//   always in reach. Brought back now that offHandFree() (below, and in
+//   rs_shieldsaw_state.zs) can tell an empty-hand squeeze from RS_Hands
+//   already holding something -- that distinction is what the original
+//   forearm mount shipped without, and why it used to fight every pickup.
+// The one cost that was never a logic bug: strapped to your own forearm, the
+// shield still covers the arm you're looking at. Shoulder does not have that
+// problem, which is why it stays the default.
+user int   rs_ss_mount_mode  = 0;
+
+// ---- the stowed model ------------------------------------------------------
+// Show the shield's stowed model at all -- on the off forearm or the
+// shoulder, whichever rs_ss_mount_mode has active -- while it is not in your
+// hand. Off makes it vanish into inventory between draws, in either mode.
+// rs_ss_deflect_stowed (below) governs whether it still deflects while gone
+// from view; the two are independent.
 user bool  rs_ss_stow        = true;
 
 // Keep it drawn even while held, so it can be positioned without putting it
@@ -76,7 +103,9 @@ user bool  rs_ss_stow_place  = false;
 // WHERE ON THE FOREARM, and where in the hand. These are read LIVE by the
 // renderer every frame through MODELDEF's PlacementCVars -- the engine looks
 // the names up by prefix, so the prefix in MODELDEF and the names here have to
-// agree and nothing in ZScript touches them.
+// agree and nothing in ZScript touches them. RS_ShieldForearmActor's model
+// block is what actually reads the rs_ss_stow_* prefix now; before
+// rs_ss_mount_mode existed nothing did.
 //
 // A number found on a slider can be folded straight into MODELDEF's Offset and
 // the slider zeroed with nothing moving; they are summed in the same translate.
@@ -102,3 +131,51 @@ user float rs_ss_held_scale  = 1.0;
 // Print the gesture's decision on every grip edge, plus the raw button once a
 // second. Tells apart "the grip never registered" from "the arbiter refused".
 user bool  rs_ss_debug       = false;
+
+// ---- A THING IN THE ROOM, NOT ON THE SCREEN -------------------------------
+//
+// Draw the shield as a world actor on the controller rather than as a player
+// sprite. A psprite cannot be occluded by a doorframe, cannot take room light,
+// and cannot be seen by another player -- which for a shield is most of the
+// point of holding one up.
+//
+// Off puts it back on the psprite, which is the fallback if a controller frame
+// is unavailable.
+user bool rs_ss_world = true;
+
+// ---- WHERE THE WORLD PROP SITS ON THE CONTROLLER --------------------------
+//
+// PlacementCVars reads these live, which is what lets the shield be dialled in
+// while wearing the headset -- the renderer picks them up every frame, so the
+// model moves as the slider does. NOTHING IN ZSCRIPT MAY WRITE THEM: two
+// writers on one transform reads exactly like a dead slider.
+//
+// Two sets because the two hands hold it at different angles and sharing one
+// prefix would mean tuning one and untuning the other.
+user float rs_ss_prop_ofs_x = 0.0;
+user float rs_ss_prop_ofs_y = 0.0;
+user float rs_ss_prop_ofs_z = 0.0;
+user float rs_ss_prop_yaw   = 0.0;
+user float rs_ss_prop_pitch = 0.0;
+user float rs_ss_prop_roll  = 0.0;
+user float rs_ss_prop_scale = 1.0;
+
+user float rs_ss_prop_off_ofs_x = 0.0;
+user float rs_ss_prop_off_ofs_y = 0.0;
+user float rs_ss_prop_off_ofs_z = 0.0;
+user float rs_ss_prop_off_yaw   = 0.0;
+user float rs_ss_prop_off_pitch = 0.0;
+user float rs_ss_prop_off_roll  = 0.0;
+user float rs_ss_prop_off_scale = 1.0;
+
+// ---- THE THROWN SAW SPINS ---------------------------------------------------
+//
+// Taken off your wrist at the moment of release, through RS_WorldHands' shared
+// throw measurement. Before this the shield left your hand at a fixed angle and
+// held it for the whole flight -- a facing, not a spin, and a disc that does not
+// turn is the gesture failing to land.
+//
+// Needs RS_WorldHands loaded; without it there is simply no spin and the shield
+// flies as it always did.
+user bool  rs_ss_spin = true;
+user float rs_ss_spin_scale = 1.0;

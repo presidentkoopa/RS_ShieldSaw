@@ -31,9 +31,11 @@ class RS_ShieldState : EventHandler
 	}
 
 	private int   mState[MAXPLAYERS];
-	private Actor mStowProp[MAXPLAYERS];    // the shield on your back
+	private Actor mStowProp[MAXPLAYERS];    // the shield on your back (shoulder mode)
+	private Actor mForearmProp[MAXPLAYERS]; // the shield on your off forearm (forearm mode)
 	private Actor mMarker[MAXPLAYERS];      // the wireframe diamond at the mount
-	private bool  mAtShoulder;              // console player is reaching, now
+	private bool  mAtShoulder;              // console player is reaching (or, in
+	                                         // forearm mode, holding a free grip), now
 	// The off-hand weapon the draw displaced, and the MAIN-hand weapon if
 	// BringUpWeapon had to drop it because one of the two was two-handed.
 	private Class<Weapon> mPrevOff[MAXPLAYERS];
@@ -154,14 +156,41 @@ class RS_ShieldState : EventHandler
 		return Level.Vec3Diff(pmo.OffhandPos, a).Length() <= r;
 	}
 
-	// THE MOTION HALF OF THE GESTURE, AND THE ONE THING STILL STUBBED.
+	// 0 = shoulder (default), 1 = forearm.
+	static int MountMode(PlayerInfo p) { return cvInt("rs_ss_mount_mode", p, 0); }
+
+	// THE FOREARM HAS NO PLACE TO REACH TO -- the shield already rides the
+	// off hand wherever it is, so there is no distance to test. What used to
+	// make "any grip draws it" unusable was never the lack of a place; it was
+	// that grip.held alone could not tell a genuine empty-hand squeeze from
+	// RS_Hands already holding a health pack. offHandFree() below is that
+	// distinction, added after the forearm was pulled, and it is the one
+	// thing that makes bringing it back safe: nothing here re-triggers the
+	// original conflict.
 	//
-	// Whether the hand was MOVING at release is what separates a throw from
-	// putting it back, and that needs hand velocity the engine does not publish
-	// yet. Until it does this answers "yes", so a release throws.
+	// AT MOUNT, generalized over both modes -- one call site for the press
+	// and release logic in pollLocalGrip() instead of a branch at every use.
+	static bool AtMount(PlayerPawn pmo, PlayerInfo p)
+	{
+		return (MountMode(p) == 1) ? true : AtShoulder(pmo, p);
+	}
+
+	// THE MOTION HALF OF THE GESTURE. Whether the hand was MOVING at release is
+	// what separates a throw from putting it back.
+	//
+	// OffhandVel is real now -- XrSpaceVelocity chained onto the same
+	// xrLocateSpace call that already reads pose, all the way through
+	// actor.h/actor.zs to here -- so this reads it instead of assuming every
+	// release is a throw. It is map units PER SECOND, not per tic: the native
+	// engine code scales the runtime's metres/second by vr_vunits_per_meter
+	// and stops there, unlike pmo.Vel which is per tic. Do not compare the two
+	// against the same threshold.
 	static bool HandMoving(PlayerPawn pmo)
 	{
-		return true;   // TODO: |OffhandVel| > rs_ss_throw_min once published
+		if (!pmo) return true;
+		let p = pmo.player;
+		double minSpeed = cvNum("rs_ss_throw_min", p, 25.0);
+		return pmo.OffhandVel.Length() >= minSpeed;
 	}
 
 	int StateOf(int pnum)
@@ -396,15 +425,25 @@ class RS_ShieldState : EventHandler
 		// always refuses, so print the raw button too.
 		if (cvOn("rs_ss_debug", p, false) && (level.time % 35) == 0)
 		{
-			Vector3 a = RS_ShieldMount.AnchorPos(pmo,
-				cvNum("rs_ss_mount_fwd",  p, -7.0),
-				cvNum("rs_ss_mount_side", p, -8.0),
-				cvNum("rs_ss_mount_frac", p,  0.86));
-			Console.Printf("[SS] grip=%d state=%d tracking=%d reach=%.1f atShoulder=%d",
-				pmo.GripHeldOff, mState[consoleplayer],
-				RS_ShieldMount.Tracking(pmo),
-				Level.Vec3Diff(pmo.OffhandPos, a).Length(),
-				AtShoulder(pmo, p));
+			int mode = MountMode(p);
+			if (mode == 1)
+			{
+				Console.Printf("[SS] grip=%d state=%d mode=forearm free=%d atMount=%d",
+					pmo.GripHeldOff, mState[consoleplayer],
+					offHandFree(pmo), AtMount(pmo, p));
+			}
+			else
+			{
+				Vector3 a = RS_ShieldMount.AnchorPos(pmo,
+					cvNum("rs_ss_mount_fwd",  p, -7.0),
+					cvNum("rs_ss_mount_side", p, -8.0),
+					cvNum("rs_ss_mount_frac", p,  0.86));
+				Console.Printf("[SS] grip=%d state=%d mode=shoulder tracking=%d reach=%.1f atMount=%d",
+					pmo.GripHeldOff, mState[consoleplayer],
+					RS_ShieldMount.Tracking(pmo),
+					Level.Vec3Diff(pmo.OffhandPos, a).Length(),
+					AtMount(pmo, p));
+			}
 		}
 
 		bool grip = pmo.GripHeldOff;
@@ -429,7 +468,7 @@ class RS_ShieldState : EventHandler
 				held, subj, mine, offHandFree(pmo));
 		}
 
-		mAtShoulder = AtShoulder(pmo, p);
+		mAtShoulder = AtMount(pmo, p);
 
 		if (grip && !was)                       // pressed
 		{
@@ -453,7 +492,15 @@ class RS_ShieldState : EventHandler
 				// PUT IT BACK where you got it: releasing at the shoulder
 				// re-holsters instead of throwing. Everywhere else, a release
 				// is a throw.
-				if (mAtShoulder)          SendNetworkEvent("rs-ss-stow");
+				//
+				// FOREARM HAS NO "WHERE YOU GOT IT" DISTINCT FROM EVERYWHERE
+				// ELSE -- mAtShoulder (AtMount) is unconditionally true there,
+				// on purpose, for the press side of this gesture. Using it
+				// here too would mean every release re-holsters and the
+				// forearm option could never throw at all. Wrist speed alone
+				// decides it in that mode.
+				bool atRestSpot = (MountMode(p) == 1) ? false : mAtShoulder;
+				if (atRestSpot)           SendNetworkEvent("rs-ss-stow");
 				else if (HandMoving(pmo)) SendNetworkEvent("rs-ss-throw");
 				else                      SendNetworkEvent("rs-ss-stow");
 			}
@@ -500,12 +547,24 @@ class RS_ShieldState : EventHandler
 	// the forearm model
 	// ======================================================================
 
-	// THE SHIELD ON YOUR BACK. A world actor, because a psprite is drawn in a
-	// HAND's frame and there is no hand at your shoulder blade -- the same
-	// reason every RS_Holsters anchor is a world actor.
+	// THE SHIELD ON YOUR BACK OR YOUR FOREARM, depending on rs_ss_mount_mode.
+	// Only one of the two props ever exists at a time -- switching the cvar
+	// mid-game tears down whichever one was up.
 	private void show(int pnum, PlayerInfo p, PlayerPawn pmo)
 	{
 		if (!RS_ShieldMount.Tracking(pmo)) { hide(pnum); return; }
+
+		if (MountMode(p) == 1) { showForearm(pnum, p, pmo); return; }
+		showShoulder(pnum, p, pmo);
+	}
+
+	// A world actor, because a psprite is drawn in a HAND's frame and there is
+	// no hand at your shoulder blade -- the same reason every RS_Holsters
+	// anchor is a world actor. Placed by script every tic; fine at 35Hz for
+	// something on your back that you never look straight at.
+	private void showShoulder(int pnum, PlayerInfo p, PlayerPawn pmo)
+	{
+		if (mForearmProp[pnum]) { mForearmProp[pnum].Destroy(); mForearmProp[pnum] = null; }
 
 		if (!mStowProp[pnum])
 		{
@@ -531,9 +590,29 @@ class RS_ShieldState : EventHandler
 		mStowProp[pnum].A_SetScale(cvNum("rs_ss_mount_scale", p, 1.0));
 	}
 
-	private void hide(int pnum)
+	// FollowOffHand does the actual placement at draw rate; this only has to
+	// keep the ACTOR somewhere sensible (culling, sound origin, Distance
+	// checks) between the renderer's own reads of the hand transform. Local
+	// offset and rotation within that frame are rs_ss_stow_ofs_* /
+	// rs_ss_stow_yaw/pitch/roll/scale, read live by MODELDEF's PlacementCVars
+	// -- nothing here writes them.
+	private void showForearm(int pnum, PlayerInfo p, PlayerPawn pmo)
 	{
 		if (mStowProp[pnum]) { mStowProp[pnum].Destroy(); mStowProp[pnum] = null; }
+
+		if (!mForearmProp[pnum])
+		{
+			mForearmProp[pnum] = Actor.Spawn("RS_ShieldForearmActor", pmo.OffhandPos, NO_REPLACE);
+			if (!mForearmProp[pnum]) return;
+			mForearmProp[pnum].master = pmo;
+		}
+		mForearmProp[pnum].SetOrigin(pmo.OffhandPos, true);
+	}
+
+	private void hide(int pnum)
+	{
+		if (mStowProp[pnum])    { mStowProp[pnum].Destroy();    mStowProp[pnum]    = null; }
+		if (mForearmProp[pnum]) { mForearmProp[pnum].Destroy(); mForearmProp[pnum] = null; }
 	}
 
 	// THE DIAMOND. Shown whenever the mount is reachable, which deliberately
@@ -553,6 +632,11 @@ class RS_ShieldState : EventHandler
 		// in your hand waiting to be put back. Not while it is in flight --
 		// there is nothing to reach for.
 		if (mode == 1 && mState[pnum] == SS_FLYING) want = false;
+
+		// NOTHING TO AIM AT IN FOREARM MODE. The shield already rides the off
+		// hand wherever it is; a diamond pinned to a computed shoulder point
+		// would just be wrong, not merely unnecessary.
+		if (MountMode(p) == 1) want = false;
 
 		if (!want)
 		{

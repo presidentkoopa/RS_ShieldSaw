@@ -8,6 +8,12 @@ AddOptionMenu "OptionsMenu"
 	Submenu "RS Shield Saw", "RS_ShieldSaw_Root"
 }
 
+OptionValue "RS_SS_MountMode"
+{
+	0, "Shoulder"
+	1, "Forearm"
+}
+
 OptionMenu "RS_ShieldSaw_Root"
 {
 	Title "RS SHIELD SAW"
@@ -21,21 +27,29 @@ OptionMenu "RS_ShieldSaw_Options"
 
 	StaticText ""
 	StaticText "The sequence", 1
-	StaticText "Stowed on your off forearm, deflecting. Draw it", 2
+	StaticText "Stowed on the mount below, deflecting. Draw it", 2
 	StaticText "into your off hand (bind Draw Shield Saw in", 2
 	StaticText "Customize Controls), grind, then throw. Your", 2
 	StaticText "previous off-hand weapon returns the instant it", 2
-	StaticText "leaves, and the shield flies back to the forearm.", 2
+	StaticText "leaves, and the shield flies back to the mount.", 2
 	Option "Grip gesture", "rs_ss_gesture", "OnOff"
-	StaticText "Squeeze the off-hand grip to draw it off your", 2
-	StaticText "forearm, hold to keep it, release to throw.", 2
+	StaticText "Squeeze the off-hand grip to draw it, hold to", 2
+	StaticText "keep it, release to throw or put it back.", 2
 	Option "Start drawn instead of stowed", "rs_ss_equip", "OnOff"
 
 	StaticText ""
-	StaticText "Forearm", 1
-	Option "Strap to off forearm when stowed", "rs_ss_stow", "OnOff"
-	StaticText "Keeps deflecting there instead of", 2
-	StaticText "vanishing into your inventory.", 2
+	StaticText "Mount", 1
+	Option "Where it stows", "rs_ss_mount_mode", "RS_SS_MountMode"
+	StaticText "Shoulder: reach for a fixed spot on your back.", 2
+	StaticText "Forearm: it rides your off hand directly, always", 2
+	StaticText "in reach, but covers the arm while it's there.", 2
+
+	StaticText ""
+	StaticText "The stowed model", 1
+	Option "Show it stowed, not in inventory", "rs_ss_stow", "OnOff"
+	StaticText "Applies to whichever mount is active above.", 2
+	StaticText "Keeps deflecting there too, if the option", 2
+	StaticText "below is on.", 2
 
 	StaticText ""
 	Option "Show while held (for placing)", "rs_ss_stow_place", "OnOff"
@@ -43,7 +57,7 @@ OptionMenu "RS_ShieldSaw_Options"
 	StaticText "below, then turn it off.", 2
 
 	StaticText ""
-	StaticText "Shoulder mount", 1
+	StaticText "Shoulder mount (when Mount above is Shoulder)", 1
 	StaticText "Reach your off hand over your shoulder and", 2
 	StaticText "squeeze to draw it. Release there to put it back.", 2
 	Slider "Back / forward",  "rs_ss_mount_fwd",   -24.0, 6.0, 0.5, 1
@@ -63,7 +77,7 @@ OptionMenu "RS_ShieldSaw_Options"
 	Slider "Scale",           "rs_ss_mount_scale",  0.2, 3.0, 0.05, 2
 
 	StaticText ""
-	StaticText "Stowed on forearm (legacy)", 1
+	StaticText "Stowed on forearm -- position on the hand", 1
 	Slider "Left / Right",   "rs_ss_stow_ofs_x", -30.0, 30.0, 0.5, 1
 	Slider "Forward / Back", "rs_ss_stow_ofs_y", -30.0, 30.0, 0.5, 1
 	Slider "Down / Up",      "rs_ss_stow_ofs_z", -30.0, 30.0, 0.5, 1
@@ -92,6 +106,11 @@ OptionMenu "RS_ShieldSaw_Options"
 	StaticText "Throw", 1
 	Slider "Speed",  "rs_ss_throw_speed", 0.2, 3.0, 0.1, 1
 	Slider "Damage", "rs_ss_cut_damage",  0.2, 5.0, 0.1, 1
+	Slider "Min. wrist speed to throw", "rs_ss_throw_min", 0.0, 100.0, 5.0, 0
+	StaticText "A release slower than this puts it away instead of", 2
+	StaticText "throwing it. Always in effect on the forearm mount;", 2
+	StaticText "on the shoulder it only matters once you're away", 2
+	StaticText "from the mount -- releasing there always stows.", 2
 
 	StaticText ""
 	StaticText "Shield", 1
@@ -104,5 +123,20 @@ OptionMenu "RS_ShieldSaw_Options"
 	Option "Gesture debug to console", "rs_ss_debug", "OnOff"
 
 	StaticText ""
-	SafeCommand "Reset all", "resetcvar rs_ss_stow rs_ss_stow_place rs_ss_stow_ofs_x rs_ss_stow_ofs_y rs_ss_stow_ofs_z rs_ss_stow_yaw rs_ss_stow_pitch rs_ss_stow_roll rs_ss_stow_scale rs_ss_held_ofs_x rs_ss_held_ofs_y rs_ss_held_ofs_z rs_ss_held_yaw rs_ss_held_pitch rs_ss_held_roll rs_ss_held_scale rs_ss_locks rs_ss_lock_cone rs_ss_lock_range rs_ss_throw_speed rs_ss_cut_damage rs_ss_deflect rs_ss_deflect_stowed rs_ss_handmodel rs_ss_start rs_ss_equip rs_ss_gesture"
+	SafeCommand "Reset all", "resetcvar rs_ss_mount_mode rs_ss_stow rs_ss_stow_place rs_ss_stow_ofs_x rs_ss_stow_ofs_y rs_ss_stow_ofs_z rs_ss_stow_yaw rs_ss_stow_pitch rs_ss_stow_roll rs_ss_stow_scale rs_ss_held_ofs_x rs_ss_held_ofs_y rs_ss_held_ofs_z rs_ss_held_yaw rs_ss_held_pitch rs_ss_held_roll rs_ss_held_scale rs_ss_locks rs_ss_lock_cone rs_ss_lock_range rs_ss_throw_speed rs_ss_cut_damage rs_ss_throw_min rs_ss_deflect rs_ss_deflect_stowed rs_ss_handmodel rs_ss_start rs_ss_equip rs_ss_gesture"
+}
+
+AddOptionMenu "RS_ShieldSaw_Options"
+{
+	StaticText ""
+	StaticText "The thrown saw", 1
+	Option "Spin from your wrist",  "rs_ss_spin", "OnOff"
+	Slider "  Spin strength",       "rs_ss_spin_scale", 0.0, 4.0, 0.1, 1
+	StaticText "How much of your wrist's flick the saw keeps as it", "DarkGray"
+	StaticText "flies. Needs World Hands loaded.", "DarkGray"
+	StaticText ""
+	Option "Draw as a world object", "rs_ss_world", "OnOff"
+	StaticText "A thing in the room rather than a sprite on your", "DarkGray"
+	StaticText "screen -- occluded by doorframes, lit by the room,", "DarkGray"
+	StaticText "and visible to other players.", "DarkGray"
 }

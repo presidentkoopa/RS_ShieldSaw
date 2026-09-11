@@ -279,11 +279,40 @@ class RS_ShieldSaw : Weapon
 			deflector.master = owner;
 		}
 
-		// Held: on the hand holding it. Stowed: on the off forearm, where the
-		// model is drawn.
+		// Held: on the hand holding it. Stowed: wherever the model actually is
+		// -- the off hand in forearm mode, the shoulder anchor in shoulder
+		// mode. This used to be OffhandPos unconditionally, which was correct
+		// only for the forearm and put the guard in the player's empty hand
+		// instead of on their back for the whole time the shoulder mount has
+		// existed.
 		bool held = isHeld();
-		Vector3 hp = held ? HandPos() : owner.OffhandPos;
-		double ang = held ? HandAngle() : (owner.OffhandAngle + 90.0);
+		Vector3 hp;
+		double  ang;
+		if (held)
+		{
+			hp  = HandPos();
+			ang = HandAngle();
+		}
+		else
+		{
+			let p = owner.player;
+			if (p && cvInt("rs_ss_mount_mode", p, 0) == 1)
+			{
+				hp  = owner.OffhandPos;
+				ang = owner.OffhandAngle + 90.0;
+			}
+			else
+			{
+				hp = RS_ShieldMount.AnchorPos(PlayerPawn(owner),
+					cvNum("rs_ss_mount_fwd",  p, -7.0),
+					cvNum("rs_ss_mount_side", p, -8.0),
+					cvNum("rs_ss_mount_frac", p,  0.86));
+				hp.z -= cvNum("rs_ss_mount_drop", p, 11.0);
+				// No hand angle exists at a shoulder blade; face the guard
+				// outward with the body, same as the model's own yaw.
+				ang = owner.angle + cvNum("rs_ss_mount_yaw", p, 0.0) + 90.0;
+			}
+		}
 		// A FULL RADIUS CLEAR, PLUS SLACK. At half the pawn radius the hand sat
 		// INSIDE the guard's bounding box, and an actor whose box contains a
 		// trace origin is an intercept at frac 0 -- so every hitscan the player
@@ -505,6 +534,35 @@ class RS_ShieldSaw : Weapon
 		// sends it vertical -- the shield flies in the plane you threw it in.
 		f.throwRoll = bOffhandWeapon ? owner.OffhandRoll : owner.MainHandRoll;
 		f.roll      = f.throwRoll;
+
+		// ---- THE SPIN YOUR WRIST PUT ON IT ---------------------------------
+		//
+		// Asked of RS_WorldHands by SERVICE, never by class: a ZScript class
+		// reference to a pk3 that is absent, or that loads later, is fatal AND
+		// global and takes down every mod after it. Nothing answers, no spin,
+		// and the shield flies exactly as it always has.
+		//
+		// The velocity is NOT asked for, deliberately. This is a homing, routed
+		// projectile that locks targets and comes back -- its heading is aimed,
+		// not thrown, so a hand-measured velocity would be the wrong input. The
+		// spin is the half of a throw that genuinely belongs to your wrist.
+		//
+		// Roll specifically, because that is the axis a disc spins about: the
+		// face stays in its plane and turns within it.
+		if (RS_ShieldSaw.cvOn("rs_ss_spin", owner.player, true))
+		{
+			ServiceIterator sit = ServiceIterator.Find("RS_ThrowService");
+			Service sv;
+			while (sv = sit.Next())
+			{
+				if (sv.GetInt("throw.hello", "", 0, 0, null, 'None') != 1) continue;
+				// Thousandths -- a Service returns an int.
+				double r = sv.GetInt("throw.spin.roll", "", HandIndex(), 0,
+					owner, 'RS_ShieldSaw') / 1000.0;
+				f.spinRate = r * RS_ShieldSaw.cvNum("rs_ss_spin_scale", owner.player, 1.0);
+				break;
+			}
+		}
 		f.speedMult = throwSpeed;
 		f.dmgMult   = cutDamage;
 
@@ -556,10 +614,30 @@ class RS_ShieldSaw : Weapon
 		if (!p) return;
 		if (p.ReadyWeapon != self && p.OffhandWeapon != self) return;
 
+		let psp = p.FindPSprite(bOffhandWeapon ? PSP_OFFHANDWEAPON : PSP_WEAPON);
+		if (!psp) return;
+
+		// ---- THE WORLD PROP DRAWS IT NOW -----------------------------------
+		//
+		// When rs_ss_world is on, a world actor on the controller draws the
+		// shield and this layer must draw NOTHING -- otherwise there are two
+		// shields, one of them glued to your view.
+		//
+		// The LAYER STAYS. It still runs every state: the deploy, the grind
+		// loop, the sweep, the stow and the return are all this state machine,
+		// and the prop only copies the frame it lands on. Killing the layer
+		// would kill the weapon; making it invisible is the whole change.
+		//
+		// NoDraw rather than a TNT1 sprite, because the frame LETTER is what
+		// the prop reads -- park it on TNT1 and every frame reads as A and the
+		// shield never opens.
+		let c = CVar.GetCVar("rs_ss_world", p);
+		if (c && c.GetBool()) { psp.NoDraw = true; return; }
+		psp.NoDraw = false;
+
 		int spr = GetSpriteIndex(handModel ? "SSAW" : "SSNH");
 		if (spr < 0) return;
-		let psp = p.FindPSprite(bOffhandWeapon ? PSP_OFFHANDWEAPON : PSP_WEAPON);
-		if (psp) psp.sprite = spr;
+		psp.sprite = spr;
 	}
 
 	States

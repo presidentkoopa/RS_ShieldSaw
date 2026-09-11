@@ -165,6 +165,27 @@ Model RS_ShieldStowActor
 	FrameIndex SSTW A 0 0	FrameIndex SSTW A 1 0
 }
 
+// ---- stowed on your off forearm (rs_ss_mount_mode 1) ----------------------
+// FollowOffHand instead of a computed world point: the whole reason a forearm
+// mount was ever awkward to place was fighting the same 35Hz-vs-hand-speed
+// problem RS_ShieldSawProp already solved for the held pose. Reuse the fix.
+// PlacementCVars rs_ss_stow are the sliders under "Stowed on forearm" in the
+// options menu -- offset and rotation within the hand's own frame, live.
+Model RS_ShieldForearmActor
+{
+	Path "models/shieldsaw"
+	Model 0 "shield.md3"
+	Skin 0 "shieldsaw_b_HD.png"
+	Model 1 "shieldsaw.md3"
+	Skin 1 "shieldsaw_HD.png"
+	Scale 1.0 1.0 1.0
+	NOAUTOREVERSE
+	FollowOffHand
+	PlacementCVars rs_ss_stow
+
+	FrameIndex SSTW A 0 0	FrameIndex SSTW A 1 0
+}
+
 // ---- the mount marker ----------------------------------------------------
 // HardPoints' wireframe diamond, so the shoulder mount reads the same way
 // every other anchor in the family does. Scale is in map units and the mesh is
@@ -175,4 +196,63 @@ Model RS_ShieldMountMarker
 	Model 0 "rs_ss_diamond.obj"
 	Scale 4.0 4.0 4.0
 	FrameIndex SSMK A 0 0
+}
+
+// ---- THE WORLD PROPS --------------------------------------------------------
+//
+// The same shield and saw the psprite blocks above draw, on an actor that rides
+// the controller instead. FollowMainHand / FollowOffHand put the mesh in that
+// hand's frame and the renderer resolves it at DRAW rate -- which is why a prop
+// on a moving hand is as smooth as the hand, where script placing it once a tic
+// would visibly swim behind it.
+//
+// NO HAND MESH. The psprite blocks carry hand.md3 as model 2 because a player
+// sprite has to draw its own hand or there is none. RS_WorldHands draws both
+// hands for every weapon now, so including one here would put a second hand
+// inside the first.
+//
+// The frame table is SSNH's, unchanged: model 0 is the shield opening 0->3,
+// model 1 is the blade orbiting 0->7. The weapon's state machine still drives
+// which letter, exactly as it did when it was driving a psprite.
+
+Model RS_ShieldSawProp
+{
+	Path "models/shieldsaw"
+	Model 0 "shield.md3"
+	Skin 0 "shieldsaw_b_HD.png"
+	Model 1 "shieldsaw.md3"
+	Skin 1 "shieldsaw_HD.png"
+	Scale 1.0 1.0 1.0
+	NOAUTOREVERSE
+	FollowMainHand
+	PlacementCVars rs_ss_prop
+	FrameIndex SSNH A 0 0	FrameIndex SSNH A 1 0
+	FrameIndex SSNH B 0 1	FrameIndex SSNH B 1 1
+	FrameIndex SSNH C 0 2	FrameIndex SSNH C 1 2
+	FrameIndex SSNH D 0 3	FrameIndex SSNH D 1 3
+	FrameIndex SSNH E 0 3	FrameIndex SSNH E 1 4
+	FrameIndex SSNH F 0 3	FrameIndex SSNH F 1 5
+	FrameIndex SSNH G 0 3	FrameIndex SSNH G 1 6
+	FrameIndex SSNH H 0 3	FrameIndex SSNH H 1 7
+}
+
+Model RS_ShieldSawPropOff
+{
+	Path "models/shieldsaw"
+	Model 0 "shield.md3"
+	Skin 0 "shieldsaw_b_HD.png"
+	Model 1 "shieldsaw.md3"
+	Skin 1 "shieldsaw_HD.png"
+	Scale 1.0 1.0 1.0
+	NOAUTOREVERSE
+	FollowOffHand
+	PlacementCVars rs_ss_prop_off
+	FrameIndex SSNH A 0 0	FrameIndex SSNH A 1 0
+	FrameIndex SSNH B 0 1	FrameIndex SSNH B 1 1
+	FrameIndex SSNH C 0 2	FrameIndex SSNH C 1 2
+	FrameIndex SSNH D 0 3	FrameIndex SSNH D 1 3
+	FrameIndex SSNH E 0 3	FrameIndex SSNH E 1 4
+	FrameIndex SSNH F 0 3	FrameIndex SSNH F 1 5
+	FrameIndex SSNH G 0 3	FrameIndex SSNH G 1 6
+	FrameIndex SSNH H 0 3	FrameIndex SSNH H 1 7
 }

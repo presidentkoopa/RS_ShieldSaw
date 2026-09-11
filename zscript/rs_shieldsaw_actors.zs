@@ -41,6 +41,14 @@ class RS_ShieldInFlight : Actor
 	// whole flight, so the disc spins in the plane you actually threw it in --
 	// overhand, sidearm, or anything between -- instead of always vertical.
 	double          throwRoll;
+
+	// HOW FAST IT SPINS, degrees per tic, taken off your wrist at release.
+	//
+	// A saw that does not turn is the whole gesture failing to land: you flick
+	// it and a disc slides through the air facing one way for its entire
+	// flight. throwRoll below was sampled ONCE and held, which is a facing, not
+	// a spin.
+	double          spinRate;
 	// LastRipped in the engine is a local of P_XYMovement, rebuilt EVERY TIC --
 	// it stops a ripper re-hitting within one move, not within one pass. At
 	// Speed 22 the shield sits inside a body for about two tics, so without our
@@ -157,6 +165,17 @@ class RS_ShieldInFlight : Actor
 		// time the shield steers, and PitchFromMomentum used to overwrite it
 		// again at draw time -- either would drag the disc back to whatever
 		// plane its velocity implied and undo the throw.
+		// THE PLANE IS STILL HELD -- see above -- but the disc TURNS WITHIN IT.
+		//
+		// throwRoll fixes which way the saw's face points, so steering cannot
+		// drag it back to whatever plane its velocity implies. spinRate then
+		// rotates it about that face, which is a different axis and does not
+		// fight the plane at all.
+		//
+		// Advanced every tic rather than set once: a single angle change at
+		// release is an object facing a different way for its whole flight,
+		// which looks worse than not trying.
+		throwRoll += spinRate;
 		roll = throwRoll;
 
 		if (level.time % 2 == 0)
