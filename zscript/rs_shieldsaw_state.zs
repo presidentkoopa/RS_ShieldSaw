@@ -501,19 +501,32 @@ class RS_ShieldState : EventHandler
 				// decides it in that mode.
 				bool atRestSpot = (MountMode(p) == 1) ? false : mAtShoulder;
 				if (atRestSpot)           SendNetworkEvent("rs-ss-stow");
-				else if (HandMoving(pmo)) SendNetworkEvent("rs-ss-throw");
+				else if (HandMoving(pmo))
+				{
+					// THE RELEASE VELOCITY RIDES WITH THE THROW. It is measured HERE,
+					// because this poll runs for the local player only, and every
+					// machine launches from these numbers (RS_ShieldSaw.MeasureRelease).
+					// Thousandths of a map unit per tic, so a gentle lob survives.
+					let heldSaw = RS_ShieldSaw(pmo.FindInventory("RS_ShieldSaw"));
+					Vector3 rel = (0, 0, 0);
+					if (heldSaw) rel = RS_ShieldSaw.MeasureRelease(pmo, heldSaw.HandIndex());
+					SendNetworkEvent("rs-ss-throw", int(rel.x), int(rel.y), int(rel.z));
+				}
 				else                      SendNetworkEvent("rs-ss-stow");
 			}
 		}
 	}
 
-	private void ThrowNow(int pnum)
+	// relX/Y/Z: rs-ss-throw's args, the release velocity in thousandths of a map
+	// unit per tic as the thrower's machine measured it -- the same on every
+	// machine, which is the point.
+	private void ThrowNow(int pnum, int relX = 0, int relY = 0, int relZ = 0)
 	{
 		let p = players[pnum];
 		if (!p || !p.mo) return;
 		let saw = RS_ShieldSaw(p.mo.FindInventory("RS_ShieldSaw"));
 		if (!saw || saw.flying) { Stow(pnum); return; }
-		saw.LaunchNow();
+		saw.LaunchNow(relX / 1000.0, relY / 1000.0, relZ / 1000.0);
 	}
 
 	private void RecallNow(int pnum)
@@ -529,7 +542,7 @@ class RS_ShieldState : EventHandler
 	override void NetworkProcess(ConsoleEvent e)
 	{
 		if (e.Name ~== "rs-ss-draw")        Draw(e.Player);
-		else if (e.Name ~== "rs-ss-throw")  ThrowNow(e.Player);
+		else if (e.Name ~== "rs-ss-throw")  ThrowNow(e.Player, e.Args[0], e.Args[1], e.Args[2]);
 		else if (e.Name ~== "rs-ss-stow")   Stow(e.Player);
 		else if (e.Name ~== "rs-ss-recall") RecallNow(e.Player);
 		else if (e.Name ~== "rs-ss-toggle")

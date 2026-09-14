@@ -516,7 +516,33 @@ class RS_ShieldSaw : Weapon
 		if (st && owner) st.LaunchFailed(owner.PlayerNumber());
 	}
 
-	void LaunchNow()
+	// THE RELEASE VELOCITY, MEASURED ON THE THROWER'S OWN MACHINE ONLY.
+	//
+	// RS_ThrowService answers from RS_Swing, which samples the CONSOLE player's
+	// controller -- a reading that exists on one machine and nowhere else. So it
+	// is asked once, by RS_ShieldState's grip poll (which runs only for the local
+	// player), and the answer travels in rs-ss-throw's three int args to every
+	// machine alike; LaunchNow never asks the service for it. Thousandths of a
+	// map unit per tic, as the service returns them. (0, 0, 0) when nothing
+	// answers.
+	static Vector3 MeasureRelease(PlayerPawn pmo, int hand)
+	{
+		ServiceIterator it = ServiceIterator.Find("RS_ThrowService");
+		Service sv;
+		while (sv = it.Next())
+		{
+			if (sv.GetInt("throw.hello", "", 0, 0, null, 'None') != 1) continue;
+			double mx = sv.GetInt("throw.vel.x", "", hand, 0, pmo, 'RS_ShieldSaw');
+			double my = sv.GetInt("throw.vel.y", "", hand, 0, pmo, 'RS_ShieldSaw');
+			double mz = sv.GetInt("throw.vel.z", "", hand, 0, pmo, 'RS_ShieldSaw');
+			return (mx, my, mz);
+		}
+		return (0, 0, 0);
+	}
+
+	// relX/Y/Z: the release velocity in map units per tic, as measured on the
+	// thrower's machine and carried by rs-ss-throw (MeasureRelease above).
+	void LaunchNow(double relX = 0, double relY = 0, double relZ = 0)
 	{
 		if (!owner || !owner.player || flying) return;
 		let p = owner.player;
@@ -591,32 +617,28 @@ class RS_ShieldSaw : Weapon
 		// the disc -- that is the lock-on. With none it leaves along the swing
 		// that released it, not along the hand's aim: a throw, not a point and
 		// fire. The release is already gated on the hand moving
-		// (RS_ShieldState's motion half), and this reads the same RS_WorldHands
-		// measurement the grenade throws on, by SERVICE for the reason the spin
-		// block gives. Nothing answers, or the swing reads zero, and it flies the
-		// aimed line exactly as before. Speed follows the arm inside a band around
-		// the tuned Speed, so a lob and a hurl differ without either breaking the
-		// route home; Launch then applies rs_ss_throw_speed on top as it always has.
+		// (RS_ShieldState's motion half), and the velocity is RS_WorldHands'
+		// measurement of that release -- the one the grenade throws on.
+		//
+		// NETPLAY: it is NOT asked of the service here. This runs on every machine,
+		// and the service samples each machine's OWN player's controller, so asking
+		// here sent the disc a different way on every machine (the desync
+		// uzdxrema-63 found in the first version, 2026-09-14). The thrower's machine
+		// measures it once as it sends rs-ss-throw (MeasureRelease above) and every
+		// machine launches from those args. Zero -- no service on the sender, or no
+		// velocity -- flies the aimed line exactly as before. Speed follows the arm
+		// inside a band around the tuned Speed, so a lob and a hurl differ without
+		// either breaking the route home; Launch then applies rs_ss_throw_speed on
+		// top as it always has.
 		if (locks.Size() == 0)
 		{
-			ServiceIterator tit = ServiceIterator.Find("RS_ThrowService");
-			Service tsv;
-			while (tsv = tit.Next())
+			Vector3 tv = (relX, relY, relZ);
+			double tlen = tv.Length();
+			if (tlen > 0.5)
 			{
-				if (tsv.GetInt("throw.hello", "", 0, 0, null, 'None') != 1) continue;
-				// Thousandths of a map unit per tic, as the spin above.
-				double tx = tsv.GetInt("throw.vel.x", "", HandIndex(), 0, owner, 'RS_ShieldSaw') / 1000.0;
-				double ty = tsv.GetInt("throw.vel.y", "", HandIndex(), 0, owner, 'RS_ShieldSaw') / 1000.0;
-				double tz = tsv.GetInt("throw.vel.z", "", HandIndex(), 0, owner, 'RS_ShieldSaw') / 1000.0;
-				Vector3 tv = (tx, ty, tz);
-				double tlen = tv.Length();
-				if (tlen > 0.5)
-				{
-					double tspeed = clamp(tlen, sh.Speed * 0.5, sh.Speed * 2.0);
-					sh.Vel = tv / tlen * tspeed;
-					sh.angle = VectorAngle(tx, ty);
-				}
-				break;
+				double tspeed = clamp(tlen, sh.Speed * 0.5, sh.Speed * 2.0);
+				sh.Vel = tv / tlen * tspeed;
+				sh.angle = VectorAngle(relX, relY);
 			}
 		}
 
