@@ -85,12 +85,27 @@ Model RS_ShieldSaw
 //
 // PitchFromMomentum is deliberately gone with it: it overwrote the pitch every
 // frame from the velocity, which fights a throw plane the player chose.
+//
+// A SKIN PER SURFACE (fixed 2026-09-14). shield_weapon.md3's face and teeth
+// (surfaces 0 and 2) are laid out on shieldsaw.png and only its back (surface 1)
+// on shieldsaw_b.png, but a lone `Skin 0` dresses every surface -- the thrown
+// shield flew with its face and teeth wearing the back plate's texture.
+//
+// THE SIZE OF THE SHIELD IN YOUR HAND (fixed 2026-09-14). Held, the shield is
+// 57.94 mesh units across on the hand path, 57.94 x 0.34 = 19.70 map units.
+// Thrown, this mesh is 56.56 across on the world path, and the actor's own
+// Scale 0.55 made it 31.1 -- 1.6 times the shield that left your hand. 19.70 /
+// 56.56 / 0.55 = 0.6333 brings it back to 19.70; the actor's 0.55 is left alone
+// (RS_ShieldTrail shares it).
 Model RS_ShieldInFlight
 {
 	Path "models/shieldsaw"
 	Model 0 "shield_weapon.md3"
-	Skin 0 "shieldsaw_b_HD.png"
-	Scale 1.0 1.0 1.0
+	Skin 0 "shieldsaw_HD.png"
+	SurfaceSkin 0 0 "shieldsaw_HD.png"
+	SurfaceSkin 0 1 "shieldsaw_b_HD.png"
+	SurfaceSkin 0 2 "shieldsaw_HD.png"
+	Scale 0.6333 0.6333 0.6333
 	UseActorPitch
 	UseActorRoll
 
@@ -112,11 +127,13 @@ Model RS_ShieldInFlight
 	FrameIndex SFLY P 0 15
 }
 
+// Scaled with the thrown shield above (0.6333, 2026-09-14), so the glow keeps
+// the size it had around the disc when both were 1.0.
 Model RS_ShieldTrail
 {
 	Path "models/shieldsaw"
 	Model 0 "shield_weapon_glow.md3"
-	Scale 1.0 1.0 1.0
+	Scale 0.6333 0.6333 0.6333
 	UseActorPitch
 	UseActorRoll
 	FrameIndex SFLY A 0 0
@@ -151,6 +168,13 @@ Model RS_ShieldLockMark
 //
 // Frame 0 of both meshes: shield closed, blade stowed. The right pose for
 // something you are carrying rather than using.
+//
+// SCALE 0.34, THE SIZE OF THE SHIELD IN YOUR HAND (fixed 2026-09-14). The held
+// and forearm blocks draw this mesh on the hand path, where one mesh unit is
+// 0.34 map units: 57.94 across = 19.70. This block is a plain world actor, where
+// one mesh unit is one map unit, so at 1.0 the shield on your back was 57.9
+// across -- 2.9 times the one you carry. rs_ss_mount_scale still multiplies it
+// (A_SetScale on the actor).
 Model RS_ShieldStowActor
 {
 	Path "models/shieldsaw"
@@ -158,7 +182,7 @@ Model RS_ShieldStowActor
 	Skin 0 "shieldsaw_b_HD.png"
 	Model 1 "shieldsaw.md3"
 	Skin 1 "shieldsaw_HD.png"
-	Scale 1.0 1.0 1.0
+	Scale 0.34 0.34 0.34
 	UseActorPitch
 	UseActorRoll
 
@@ -190,10 +214,18 @@ Model RS_ShieldForearmActor
 // HardPoints' wireframe diamond, so the shoulder mount reads the same way
 // every other anchor in the family does. Scale is in map units and the mesh is
 // radius 1, so this is the marker's real size.
+//
+// A SKIN, BECAUSE WITHOUT ONE IT DREW NOTHING (fixed 2026-09-14). The OBJ names
+// no material and the block named no skin, and a model with no skin that
+// resolves is skipped without a word. shieldsaw_glow.png, the shield's own glow,
+// is the texture an Add-rendered marker wants. A second Path line so the skin is
+// found beside the shield's textures.
 Model RS_ShieldMountMarker
 {
 	Path "models"
 	Model 0 "rs_ss_diamond.obj"
+	Path "models/shieldsaw"
+	Skin 0 "shieldsaw_glow.png"
 	Scale 4.0 4.0 4.0
 	FrameIndex SSMK A 0 0
 }

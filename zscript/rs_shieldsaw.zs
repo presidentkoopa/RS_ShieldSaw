@@ -561,10 +561,9 @@ class RS_ShieldSaw : Weapon
 		// global and takes down every mod after it. Nothing answers, no spin,
 		// and the shield flies exactly as it always has.
 		//
-		// The velocity is NOT asked for, deliberately. This is a homing, routed
-		// projectile that locks targets and comes back -- its heading is aimed,
-		// not thrown, so a hand-measured velocity would be the wrong input. The
-		// spin is the half of a throw that genuinely belongs to your wrist.
+		// The velocity is asked for below, and only for a free throw: a painted
+		// route steers the disc, so the hand's measured velocity is the right
+		// input only when nothing is locked.
 		//
 		// Roll specifically, because that is the axis a disc spins about: the
 		// face stays in its plane and turns within it.
@@ -584,6 +583,42 @@ class RS_ShieldSaw : Weapon
 		}
 		f.speedMult = throwSpeed;
 		f.dmgMult   = cutDamage;
+
+		// ---- THE HEADING YOUR ARM GAVE IT, when nothing is locked -----------
+		//
+		// The owner, 2026-09-14: "make sure they are both velocity based" / "we
+		// want real vr mechanics". With targets painted the route still steers
+		// the disc -- that is the lock-on. With none it leaves along the swing
+		// that released it, not along the hand's aim: a throw, not a point and
+		// fire. The release is already gated on the hand moving
+		// (RS_ShieldState's motion half), and this reads the same RS_WorldHands
+		// measurement the grenade throws on, by SERVICE for the reason the spin
+		// block gives. Nothing answers, or the swing reads zero, and it flies the
+		// aimed line exactly as before. Speed follows the arm inside a band around
+		// the tuned Speed, so a lob and a hurl differ without either breaking the
+		// route home; Launch then applies rs_ss_throw_speed on top as it always has.
+		if (locks.Size() == 0)
+		{
+			ServiceIterator tit = ServiceIterator.Find("RS_ThrowService");
+			Service tsv;
+			while (tsv = tit.Next())
+			{
+				if (tsv.GetInt("throw.hello", "", 0, 0, null, 'None') != 1) continue;
+				// Thousandths of a map unit per tic, as the spin above.
+				double tx = tsv.GetInt("throw.vel.x", "", HandIndex(), 0, owner, 'RS_ShieldSaw') / 1000.0;
+				double ty = tsv.GetInt("throw.vel.y", "", HandIndex(), 0, owner, 'RS_ShieldSaw') / 1000.0;
+				double tz = tsv.GetInt("throw.vel.z", "", HandIndex(), 0, owner, 'RS_ShieldSaw') / 1000.0;
+				Vector3 tv = (tx, ty, tz);
+				double tlen = tv.Length();
+				if (tlen > 0.5)
+				{
+					double tspeed = clamp(tlen, sh.Speed * 0.5, sh.Speed * 2.0);
+					sh.Vel = tv / tlen * tspeed;
+					sh.angle = VectorAngle(tx, ty);
+				}
+				break;
+			}
+		}
 
 		for (int i = 0; i < locks.Size(); i++)
 			f.route.Push(locks[i]);
