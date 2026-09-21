@@ -65,7 +65,31 @@ class RS_ShieldSaw : Weapon
 
 	// ---- flight -----------------------------------------------------------
 	Actor flying;                   // the thrown shield; null when in hand
-	Actor deflector;                // the passive guard; null while thrown
+
+	// ---- THE PUBLISHED HAND POSE ------------------------------------------
+	//
+	// Playsim state, identical on every machine, written only by rs-ss-pose (RS_ShieldState). Every
+	// gameplay decision this weapon makes reads it through NetPos / NetAngle / NetPitch below rather
+	// than touching AttackPos / OffhandPos directly, because those are the LOCAL device's and are
+	// stand-ins everywhere else -- which had the guard reflecting different missiles and the lock cone
+	// catching different enemies on every peer.
+	//
+	// Untouched in single-player: the accessors hand back the live pose there, at no latency.
+	Vector3 netHandPos;
+	double  netHandAngle, netHandPitch;
+	bool    netPoseValid;
+
+	void PublishPose(Vector3 p, double ang, double pit)
+	{
+		netHandPos = p; netHandAngle = ang; netHandPitch = pit; netPoseValid = true;
+	}
+
+	// WHAT GAMEPLAY IS ALLOWED TO READ. In a netgame this is the published pose on every machine, the
+	// holder's included -- a holder acting on a fresher pose than its peers is the same divergence with
+	// one fewer machine in it.
+	Vector3 NetPos()   { return (multiplayer && netPoseValid) ? netHandPos   : HandPos(); }
+	double  NetAngle() { return (multiplayer && netPoseValid) ? netHandAngle : HandAngle(); }
+	double  NetPitch() { return (multiplayer && netPoseValid) ? netHandPitch : HandPitch(); }
 
 	// ---- settings, refreshed once a second --------------------------------
 	private int    maxLocks;
@@ -75,6 +99,14 @@ class RS_ShieldSaw : Weapon
 	private double cutDamage;
 	private bool   deflectOn;
 	private bool   handModel;
+	private double guardRadius;
+	private double guardStandoff;
+	// [VECTOROUT] guardPlane's answer. Fields, not `out Vector3` parameters: a vector passed by
+	// reference hands the ZScript JIT a register type it has no case for, and the class dies at load
+	// (RS_WorldHands/zscript/hands/rs_grab.zs:19 documents the same trap). Do not collapse these back.
+	private Vector3 guardCentre;
+	private Vector3 guardNormal;
+	private bool   deflectAim;
 
 	Default
 	{
@@ -177,27 +209,14 @@ class RS_ShieldSaw : Weapon
 	// upkeep
 	// ======================================================================
 
-	// The owner guard in Tick only covers "no owner". If the weapon itself is
-	// destroyed -- morph, ClearInventory -- Tick stops running entirely and the
-	// deflector is orphaned as an invisible +SHOOTABLE +REFLECTIVE actor.
-	override void OnDestroy()
-	{
-		if (deflector) { deflector.Destroy(); deflector = null; }
-		Super.OnDestroy();
-	}
-
 	override void Tick()
 	{
 		Super.Tick();
 
-		// BEFORE the early return, not after: holdDeflector is the only thing
-		// that destroys the guard, so bailing out first orphans an invisible
-		// +SHOOTABLE +REFLECTIVE actor in the map forever.
-		if (!owner || !owner.player || owner.health < 1)
-		{
-			if (deflector) { deflector.Destroy(); deflector = null; }
-			return;
-		}
+		// NOTHING TO ORPHAN. The guard used to be an actor in the map, so an early
+		// return here leaked an invisible +SHOOTABLE thing forever. It is a test
+		// run from this Tick now -- stop ticking and it is simply gone.
+		if (!owner || !owner.player || owner.health < 1) return;
 
 		// maxLocks == 0 is the never-read state, not a legal setting -- without
 		// this the first second of every map has no locks, no deflector and
@@ -205,7 +224,7 @@ class RS_ShieldSaw : Weapon
 		if (maxLocks == 0 || GetAge() % 35 == 0) readSettings();
 
 		pruneLocks();
-		holdDeflector();
+		sweepDeflect();
 		applyModel();
 	}
 
@@ -219,6 +238,13 @@ class RS_ShieldSaw : Weapon
 		cutDamage  = clamp(cvNum("rs_ss_cut_damage", p, 1.0), 0.1, 10.0);
 		deflectOn  = cvOn("rs_ss_deflect", p, true);
 		handModel  = cvOn("rs_ss_handmodel", p, true);
+		// THE DISC YOU ACTUALLY BLOCK WITH. The shield is 19.7 map units across in the hand, so its
+		// own rim is a radius of about 10; 14 is that plus the slack a moving hand needs for the
+		// thing to be worth raising at all. Its own slider, because only a headset can say whether
+		// it reads as a shield or as a cheat.
+		guardRadius   = clamp(cvNum("rs_ss_guard_radius", p, 14.0), 2.0, 64.0);
+		guardStandoff = clamp(cvNum("rs_ss_guard_standoff", p, 6.0), 0.0, 32.0);
+		deflectAim    = cvOn("rs_ss_deflect_aim", p, true);
 	}
 
 	// A locked target that died is not a waypoint any more.
@@ -243,103 +269,207 @@ class RS_ShieldSaw : Weapon
 	}
 
 	// ======================================================================
-	// PASSIVE -- the deflector
+	// PASSIVE -- the guard
 	// ======================================================================
 	//
-	// It exists only while the shield is actually in the hand. Throwing it is
-	// meant to COST you the guard -- that is the whole balance of the weapon,
-	// and it is what makes the throw a decision instead of a rotation.
-	private void holdDeflector()
+	// NO ACTOR, AND THAT IS THE FIX RATHER THAN A TIDY-UP.
+	//
+	// The guard used to be RS_ShieldDeflector: +SHOOTABLE, +REFLECTIVE, leaning on a CanCollideWith
+	// override to let your own fire through. PIT_CheckThing only asks P_CanCollideWith when the
+	// VICTIM is MF_SOLID, TOUCHY or BUMPSPECIAL (p_map.cpp:1550), and the guard was none of the
+	// three -- so that override was never called once. Your own rocket ran P_DoMissileDamage on it,
+	// DamageMobj cleared bReflective so it would not come home, P_ReflectOffActor then declined, and
+	// P_ExplodeMissile went off eighteen units from your hand. Hitscans have no victim-side veto in
+	// the engine at all and simply died on it.
+	//
+	// Nothing shootable exists here now, so there is nothing left for your own fire to run into,
+	// from any weapon, at any range. The shield asks the question itself instead.
+	//
+	// AND IT ASKS IT ABOUT THE SHIELD YOU CAN SEE. The old box was placed with AngleToVector on the
+	// hand's YAW ALONE -- raise the shield to meet a fireball coming down at you and the guard did
+	// not move -- and it was smaller than the disc. This is a swept disc with the face normal the
+	// hand is actually pointing, in both axes.
+	//
+	// LOCAL POSES, AS EVERYWHERE ELSE IN THIS FILE. OffhandPos/OffhandAngle are real only on the
+	// machine whose headset writes them, exactly as they were for the old guard's placement -- no
+	// worse than what it replaces and no better. Networking the hand pose is the real answer and is
+	// an engine question, not this file's.
+
+	// The shield's face: where its centre is, and which way it looks.
+	private bool guardPlane()
 	{
-		// HELD OR STOWED, BUT NOT THROWN -- and only while the state machine
-		// agrees the shield exists somewhere on you. Throwing it is what costs
-		// you the guard, and that is the weapon's balance.
-		//
-		// rs_ss_deflect_stowed splits the two: on, the forearm keeps deflecting
-		// (the point of the mount); off, only a shield actually in your hand
-		// blocks anything, which is the stricter reading and the one to use if
-		// a permanent guard feels like too much.
-		bool want = deflectOn && !flying && isHeld();
-		if (!want && deflectOn && !flying && !isHeld())
+		guardCentre = (0, 0, 0);
+		guardNormal = (1, 0, 0);
+		if (!owner || !owner.player || flying || !deflectOn) return false;
+		let p = owner.player;
+
+		if (isHeld())
 		{
-			let p = owner.player;
-			want = p && cvOn("rs_ss_deflect_stowed", p, true);
+			// BOTH AXES. HandPitch is already playsim convention (positive down), so this is the
+			// ordinary Doom direction vector and nothing here needs a second opinion about signs.
+			double ang = NetAngle(), pit = NetPitch();
+			guardNormal = (cos(pit) * cos(ang), cos(pit) * sin(ang), -sin(pit));
+			guardCentre = NetPos() + guardNormal * guardStandoff;
+			return true;
 		}
 
-		if (!want)
+		// STOWED. rs_ss_deflect_stowed splits the two: on, the mount keeps guarding, which is the
+		// point of wearing it; off, only a shield in your hand blocks anything.
+		if (!cvOn("rs_ss_deflect_stowed", p, true)) return false;
+
+		if (mountMode() == 1)
 		{
-			if (deflector) { deflector.Destroy(); deflector = null; }
-			return;
+			// The forearm. The face looks across the arm, not down its muzzle.
+			double ang = NetAngle() + 90.0;
+			guardNormal = (cos(ang), sin(ang), 0);
+			guardCentre = NetPos();
+			return true;
 		}
 
-		if (!deflector)
-		{
-			deflector = Actor.Spawn("RS_ShieldDeflector", owner.pos);
-			if (!deflector) return;
-			deflector.master = owner;
-		}
+		// The shoulder. It is on your BACK, so the face it presents is behind you -- which is the
+		// one thing a shield you are not holding is actually good for.
+		// THE MOUNT SLIDERS ARE `user` CVARS AND THIS IS A COLLISION TEST, so in a netgame they are
+		// ignored and the shipped defaults are used instead. Two players with different seating
+		// preferences must not guard different volumes; in single-player the sliders still do what
+		// they always did. (AnchorPos itself reads HmdPos, which is local too -- so the stowed guard
+		// in a netgame hangs off the pawn's own body yaw and nothing else.)
+		Vector3 a = RS_ShieldMount.AnchorPos(PlayerPawn(owner),
+			mountNum("rs_ss_mount_fwd",  -7.0),
+			mountNum("rs_ss_mount_side", -8.0),
+			mountNum("rs_ss_mount_frac",  0.86));
+		a.z -= mountNum("rs_ss_mount_drop", 11.0);
+		double bang = owner.angle + mountNum("rs_ss_mount_yaw", 0.0) + 180.0;
+		guardNormal = (cos(bang), sin(bang), 0);
+		guardCentre = a;
+		return true;
+	}
 
-		// Held: on the hand holding it. Stowed: wherever the model actually is
-		// -- the off hand in forearm mode, the shoulder anchor in shoulder
-		// mode. This used to be OffhandPos unconditionally, which was correct
-		// only for the forearm and put the guard in the player's empty hand
-		// instead of on their back for the whole time the shoulder mount has
-		// existed.
-		bool held = isHeld();
-		Vector3 hp;
-		double  ang;
-		// WHERE THE GUARD SITS, RELATIVE TO ITS FACING -- almost always the
-		// same as ang (straight out from the anchor), except forearm-stowed
-		// below, which needs to disagree with its own facing on purpose.
-		double  offAng;
-		if (held)
+	// A SEATING SLIDER THAT DECIDES A COLLISION TEST IS A SERVER VALUE IN ALL BUT NAME. These are
+	// declared `user` because they are where a player likes the shield to sit, so in a netgame they
+	// are ignored and everyone uses the shipped default.
+	private double mountNum(string n, double fb)
+	{
+		if (multiplayer) return fb;
+		return cvNum(n, owner ? owner.player : null, fb);
+	}
+
+	private int mountMode()
+	{
+		if (multiplayer) return 0;
+		return cvInt("rs_ss_mount_mode", owner ? owner.player : null, 0);
+	}
+
+	// ONE TIC OF FLIGHT AGAINST ONE DISC.
+	//
+	// A missile is caught when the segment it will travel THIS TIC crosses the shield's plane from
+	// the front, inside the disc. Testing the swept segment rather than where the missile happens to
+	// be sitting is what stops a fast one stepping straight through: a revenant missile covers ten
+	// units in a tic and a plane has no thickness.
+	private void sweepDeflect()
+	{
+		if (!guardPlane()) return;
+		Vector3 c = guardCentre, n = guardNormal;
+
+		double reach = guardRadius + 48.0;
+		BlockThingsIterator it = BlockThingsIterator.CreateFromPos(
+			c.x, c.y, c.z - reach, reach * 2.0, reach, false);
+
+		while (it.Next())
 		{
-			hp     = HandPos();
-			ang    = HandAngle();
-			offAng = ang;
+			Actor mo = it.thing;
+			if (!mo || !mo.bMissile || mo.bNoInteraction || mo.bNoClip) continue;
+			// YOURS PASSES. Once turned, a missile's target IS you -- which is also what stops it
+			// being caught a second time on its way back out.
+			if (mo == owner || mo.target == owner || mo.master == owner) continue;
+			if (mo is "RS_ShieldInFlight") continue;
+
+			Vector3 v = mo.Vel;
+			Vector3 rel = Level.Vec3Diff(c, mo.Pos);      // the missile, relative to the face
+			double d0 = rel dot n;                        // in front of it is positive
+			double d1 = (rel + v) dot n;                  // and where it will be next tic
+
+			// FROM THE FRONT, AND IT HAS TO REACH THE PLANE THIS TIC. The missile's own radius is
+			// slack on the far side, so a round stopping just short still counts as arriving.
+			if (d0 <= 0 || d1 > mo.radius * 0.5) continue;
+			double span = d0 - d1;
+			if (span <= 0.0001) continue;
+
+			double t = clamp(d0 / span, 0.0, 1.0);
+			Vector3 hit = rel + v * t;
+			Vector3 radial = hit - n * (hit dot n);
+			if (radial.Length() > guardRadius + mo.radius) continue;
+
+			deflect(mo, n);
+		}
+	}
+
+	// TURNED, NOT EATEN. Back at whoever fired it while they are still standing, and mirrored off
+	// the face otherwise -- a shot that came from a corpse still has to go somewhere, and somewhere
+	// should be where the shield was pointing.
+	private void deflect(Actor mo, Vector3 n)
+	{
+		Actor shooter = mo.target;
+
+		// THE DIRECTION IT CAME IN ON, TAKEN NOW. `mo.Vel` is rewritten further down to send the
+		// missile back out, and after that line the travel vector points the wrong way entirely --
+		// the spray would lean away from the shooter instead of back off the shield.
+		Vector3 came = (mo.Vel.Length() > 0.0001) ? mo.Vel.Unit() : -n;
+
+		// THE KILL IS YOURS from here. It is also what makes the missile pass back through you on
+		// the way out: the engine's own "do not missile your own shooter" rule doing the work.
+		mo.target = owner;
+		if (mo.bSeekerMissile) mo.tracer = shooter;
+
+		double sp = max(mo.Speed, mo.Vel.Length());
+		if (sp <= 0) sp = 10.0;
+
+		Vector3 dir;
+		if (deflectAim && shooter && shooter.health > 0 && shooter != owner)
+		{
+			dir = Level.Vec3Diff(mo.Pos, (shooter.pos.xy, shooter.pos.z + shooter.height * 0.5));
 		}
 		else
 		{
-			let p = owner.player;
-			if (p && cvInt("rs_ss_mount_mode", p, 0) == 1)
-			{
-				hp  = owner.OffhandPos;
-				ang = owner.OffhandAngle + 90.0;
-
-				// SIDEWAYS, NOT DOWNRANGE. ang here is not just a facing --
-				// it IS the off hand's live aim direction, the same line its
-				// own weapon fires along (see HandAngle/A_ShieldGrind's use
-				// of OffhandAngle for the same hand). Offsetting the guard
-				// 18 units straight out along ang, like every other case
-				// here does, plants the invisible hitbox dead in that
-				// muzzle's path -- every offhand shot ran into its own
-				// shield at point-blank range and got eaten or reflected.
-				// The guard is +INVISIBLE, so moving its collision off the
-				// firing line costs nothing visually; the model on the arm
-				// does not move.
-				offAng = ang + 90.0;
-			}
-			else
-			{
-				hp = RS_ShieldMount.AnchorPos(PlayerPawn(owner),
-					cvNum("rs_ss_mount_fwd",  p, -7.0),
-					cvNum("rs_ss_mount_side", p, -8.0),
-					cvNum("rs_ss_mount_frac", p,  0.86));
-				hp.z -= cvNum("rs_ss_mount_drop", p, 11.0);
-				// No hand angle exists at a shoulder blade; face the guard
-				// outward with the body, same as the model's own yaw.
-				ang    = owner.angle + cvNum("rs_ss_mount_yaw", p, 0.0) + 90.0;
-				offAng = ang;
-			}
+			Vector3 v = mo.Vel;
+			dir = v - n * (2.0 * (v dot n));
 		}
-		// A FULL RADIUS CLEAR, PLUS SLACK. At half the pawn radius the hand sat
-		// INSIDE the guard's bounding box, and an actor whose box contains a
-		// trace origin is an intercept at frac 0 -- so every hitscan the player
-		// fired died at zero range, from any weapon. The guard is radius 10 now,
-		// so 18 units out puts the origin comfortably outside it.
-		Vector3 at = hp + (Actor.AngleToVector(offAng, 18.0), 0);
-		deflector.SetOrigin(at - (0, 0, deflector.height * 0.5), false);
-		deflector.A_SetAngle(ang);
+		if (dir.Length() < 0.0001) dir = n;
+		dir = dir.Unit();
+
+		mo.Vel = dir * sp;
+		mo.A_SetAngle(VectorAngle(dir.x, dir.y), SPF_INTERPOLATE);
+		mo.pitch = -asin(clamp(dir.z, -1.0, 1.0));
+
+		owner.A_StartSound("rsshield/hit", CHAN_BODY);
+
+		// WHAT THE DEFLECTION LOOKS LIKE (RS_Ballistics, RSB_Impact.Land).
+		//
+		// WHAT IS DEFLECTED DECIDES THE LOOK, NOT WHAT THE SHIELD IS MADE OF. A material variant
+		// asks about a SURFACE, and a shield turning a shot in mid-air has none -- so the profile
+		// is chosen from the incoming missile instead.
+		//
+		// Classified on ENGINE-GENERAL PROPERTIES rather than class names so a modded monster's
+		// fireball still reads as fire. RSB_Bullet is the exception worth naming: with
+		// sv_rsb_enemy_rounds on, a monster's hitscan is a travelling projectile, so a shield can
+		// genuinely bat a bullet out of the air -- and it should look like one rather than like a
+		// plasma ball. The last two are a TUNING call: if a particular monster reads wrong in play,
+		// move it, the shape is right.
+		String what = "deflect";
+		if (mo is "RSB_Bullet")            what = "deflect_bullet";
+		else if (mo.DamageType == 'Fire')  what = "deflect_fire";
+		else if (mo.bBRIGHT)               what = "deflect_energy";
+		else if (mo.bNOBLOOD)              what = "deflect_goo";
+
+		// THE `true` IS inAirToo AND NOTHING DRAWS WITHOUT IT. A deflection happens in open air and
+		// the impact system correctly refuses to invent a surface that was never hit -- FromBlocking
+		// returns null there. It used to hand one back regardless, which is how melee effects played
+		// full stone impacts in mid-air; that is fixed, so an open-air effect must now be ASKED for
+		// rather than arriving by accident. Do not copy a Land() call that omits this and assume it
+		// works: the behaviour that made omission look fine is gone.
+		RSB_Impact.Land(mo, what, came, true);
+
+		if (owner.PlayerNumber() == consoleplayer)
+			level.VRHaptic(HandIndex(), 0.7, 50.0);
 	}
 
 	// ======================================================================
@@ -446,9 +576,11 @@ class RS_ShieldSaw : Weapon
 		lastLockTic = level.time;
 
 		let pmo = owner.player.mo;
-		Vector3 hp = HandPos();
-		double  ha = HandAngle();
-		double  hpit = HandPitch();
+		// THE PUBLISHED POSE, not the local device's: this list becomes the thrown shield's route, so
+		// two machines disagreeing here send the disc to different enemies.
+		Vector3 hp = NetPos();
+		double  ha = NetAngle();
+		double  hpit = NetPitch();
 
 		Actor best; double bestOff = lockCone;
 
@@ -551,12 +683,9 @@ class RS_ShieldSaw : Weapon
 		// to abandon when the previous weapon is raised.
 		owner.A_StopSound(HandChan());
 
-		// THE GUARD HAS TO GO FIRST. It sits 8 units off the hand with radius
-		// 16; the missile spawns ~11 units out with radius 12, so they overlap,
-		// the spawn-time P_TryMove fails against a SHOOTABLE DONTRIP actor, and
-		// P_SpawnPlayerMissile explodes it and hands back NULL.
-		if (deflector) { deflector.Destroy(); deflector = null; }
-
+		// NOTHING IN THE WAY OF THE LAUNCH ANY MORE. The old guard was a SHOOTABLE DONTRIP actor
+		// overlapping the spawn point, so P_SpawnPlayerMissile's own P_TryMove failed against it and
+		// handed back NULL -- one of the two ways a throw used to fail outright.
 		int alflags = bOffhandWeapon ? ALF_ISOFFHAND : 0;
 		Actor sh = owner.SpawnPlayerMissile("RS_ShieldInFlight", aimflags: alflags);
 		if (!sh) { ClearLocks(); failLaunch(); return; }
@@ -593,6 +722,7 @@ class RS_ShieldSaw : Weapon
 		//
 		// Roll specifically, because that is the axis a disc spins about: the
 		// face stays in its plane and turns within it.
+		double wristSpin = 0;
 		if (RS_ShieldSaw.cvOn("rs_ss_spin", owner.player, true))
 		{
 			ServiceIterator sit = ServiceIterator.Find("RS_ThrowService");
@@ -603,10 +733,21 @@ class RS_ShieldSaw : Weapon
 				// Thousandths -- a Service returns an int.
 				double r = sv.GetInt("throw.spin.roll", "", HandIndex(), 0,
 					owner, 'RS_ShieldSaw') / 1000.0;
-				f.spinRate = r * RS_ShieldSaw.cvNum("rs_ss_spin_scale", owner.player, 1.0);
+				wristSpin = r * RS_ShieldSaw.cvNum("rs_ss_spin_scale", owner.player, 1.0);
 				break;
 			}
 		}
+
+		// A THROWN SHIELD ALWAYS SPINS, and that is not a detail -- it is what makes it read as
+		// thrown rather than slid through the air. A wrist roll of zero is the common case (no
+		// RS_WorldHands, or a straight overhand throw with no twist in it), and taking it
+		// literally left the disc facing one way for its whole flight.
+		//
+		// The wrist rides ON TOP of a floor rather than replacing it, the same shape the grenade's
+		// lazy tumble already uses: a hard twist spins visibly harder, a flat throw still turns.
+		// Degrees per tic -- 26 is about three quarters of a turn a second.
+		double baseSpin = RS_ShieldSaw.cvNum("rs_ss_spin_base", owner.player, 26.0);
+		f.spinRate = (wristSpin < 0 ? -1.0 : 1.0) * max(abs(wristSpin), baseSpin);
 		f.speedMult = throwSpeed;
 		f.dmgMult   = cutDamage;
 
@@ -737,9 +878,21 @@ class RS_ShieldSaw : Weapon
 		SSAW A 0 { if (!A_ShieldDrawn()) return ResolveState("Ready"); return ResolveState(null); }
 		SSAW A 0 A_StartSound("rsshield/raise", invoker.HandChan());
 		SSAW BCDE 2;                                    // saw deploys
+	// ONE CUT PER TURN OF THE DISC, NOT THREE.
+	//
+	// This ran A_ShieldGrind on all three frames -- thirty-five grinds a second, each firing FIVE
+	// LineAttacks across the arc, and a body big enough to stand in that arc catches several of them
+	// per call. Four figures of damage a second on anything that touched it, and a hundred and
+	// seventy-five traces a second to produce them. The fan is right: a disc sweeps its whole
+	// diameter and a saw held sideways should still cut. The CADENCE was wrong.
+	//
+	// Grinding on the first frame of the three is about twelve cuts a second, which is a saw. The
+	// sweep stays on all three -- it paints rather than cuts, and it throttles itself to eight scans
+	// a second inside acquire() regardless.
 	GrindLoop:
 		SSAW A 0 A_StartSound("rsshield/idle", invoker.HandChan(), CHANF_LOOPING);
-		SSAW FGH 1 { A_ShieldGrind(); A_ShieldSweep(); }
+		SSAW F 1 { A_ShieldGrind(); A_ShieldSweep(); }
+		SSAW GH 1 A_ShieldSweep();
 		SSAW A 0 A_ReFire("GrindLoop");
 		SSAW A 0 A_StopSound(invoker.HandChan());
 		SSAW EDCB 2;                                    // saw stows

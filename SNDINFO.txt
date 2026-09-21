@@ -1,3 +1,8 @@
+// RS_ShieldSaw, standalone again (2026-09-21). It lived inside RS_VR_Weapons from 09-14 to 09-21;
+// the owner took it back out so it plays with any weapon pack on its own. Every name is unchanged,
+// so saved values and bindings carry over from the folded build.
+
+
 // RS_ShieldSaw sounds.
 // Lumps are the originals; the aliases are ours, so what a state plays can be
 // changed without touching the state.
@@ -25,3 +30,4 @@ shbounc2                shbounc2
 shbounc3                shbounc3
 
 rsshield/throw          shwhoosh
+

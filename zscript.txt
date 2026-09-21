@@ -5,7 +5,7 @@
 // rlvr_Settings, the weapon HUD and the aim laser before it would compile.
 // None of that is here. This is a plain Weapon on stock GZDoom, it works in
 // either hand, and it loads on its own.
-version "4.10"
+version "5.0.0"
 
 #include "zscript/rs_shieldsaw_mount.zs"
 #include "zscript/rs_shieldsaw_actors.zs"

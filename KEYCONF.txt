@@ -1,3 +1,8 @@
+// RS_ShieldSaw, standalone again (2026-09-21). It lived inside RS_VR_Weapons from 09-14 to 09-21;
+// the owner took it back out so it plays with any weapon pack on its own. Every name is unchanged,
+// so saved values and bindings carry over from the folded build.
+
+
 // addslotdefault APPENDS; setslot would clear the slot and take Fist and
 // Chainsaw away from every other mod in the load order.
 addslotdefault 1 RS_ShieldSaw
@@ -14,3 +19,9 @@ defaultbind X rs_shieldsaw_draw
 // engine refuses it with "You must use addkeysection first."
 addkeysection "RS Shield Saw" rs_shieldsaw
 addmenukey "$RS_SS_DRAW" rs_shieldsaw_draw
+
+// THE DESKTOP ROUTE (2026-09-18, the crossplatform co-op rule): throw the shield along your aim, for
+// a player with no hand motion to read. Safe in a headset too -- a second route, not a mode.
+alias rs_shieldsaw_throw "netevent rs-ss-throwkey"
+defaultbind Z rs_shieldsaw_throw
+addmenukey "Throw the shield" rs_shieldsaw_throw

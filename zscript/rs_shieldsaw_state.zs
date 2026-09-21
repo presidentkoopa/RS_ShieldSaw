@@ -40,9 +40,21 @@ class RS_ShieldState : EventHandler
 	// BringUpWeapon had to drop it because one of the two was two-handed.
 	private Class<Weapon> mPrevOff[MAXPLAYERS];
 	private Class<Weapon> mPrevMain[MAXPLAYERS];
+	// The last weapon other than the shield seen in each off hand, noted every tic: what unstow gives the
+	// hand back when the shield turns up in it unasked. A class, for the reason mPrevOff is one.
+	private Class<Weapon> mLastOff[MAXPLAYERS];
 
 	// Console-local input state. Not playsim; never read for a remote peer.
 	private bool mGripWas;
+	// THE PRESS WINDOW. Tics left in which a held grip may still become a draw, and a short cooldown
+	// so one window sends one event rather than one a tic while the answer is in flight.
+	private int  mDrawWant;
+	private int  mDrawSent;
+	// A RELEASE THAT ARRIVED BEFORE THE DRAW DID, kept whole: whether the hand was moving, where it
+	// was going, and whether it was at the mount -- all read at the moment your fingers opened.
+	private bool    mRelQueued;
+	private bool    mRelStow;
+	private Vector3 mRelVel;
 	private transient Service mArb;   // cached; re-resolved when null
 
 	private static double cvNum(string n, PlayerInfo p, double fb)
@@ -350,6 +362,9 @@ class RS_ShieldState : EventHandler
 			let pmo = p.mo;
 			if (!pmo || pmo.health <= 0) { hide(i); continue; }
 
+			// THE OFF HAND'S OWN WEAPON, remembered for unstow. Every player, every machine alike.
+			if (p.OffhandWeapon && !(p.OffhandWeapon is "RS_ShieldSaw")) mLastOff[i] = p.OffhandWeapon.GetClass();
+
 			let saw = RS_ShieldSaw(pmo.FindInventory("RS_ShieldSaw"));
 			if (!saw) { hide(i); continue; }
 
@@ -399,8 +414,10 @@ class RS_ShieldState : EventHandler
 	//
 	// Clearing OffhandWeapon alone would leave the hand empty, and the engine
 	// would simply pick the shield again next tic -- it is off-hand capable and
-	// may be the only thing that is. So hand the slot to something else if
-	// there is anything else, and only then fall back to empty.
+	// may be the only thing that is. So the hand gets back the weapon it held
+	// before the shield turned up (mLastOff), raised the way restorePrevious
+	// raises one -- unless that weapon is gone, is in the main hand now, or
+	// another switch is already under way; only then does it stay empty.
 	private void unstow(int pnum, PlayerInfo p, PlayerPawn pmo, Weapon saw)
 	{
 		p.SetPsprite(PSP_OFFHANDWEAPON, null);
@@ -409,6 +426,26 @@ class RS_ShieldState : EventHandler
 		pmo.A_StopSound(CHAN_OFFWEAPON);
 		claimOffHand(pmo, false);
 		mState[pnum] = SS_STOWED;
+
+		Weapon back = null;
+		if (mLastOff[pnum]) back = Weapon(pmo.FindInventory(mLastOff[pnum]));
+		if (back && back != saw && back != p.ReadyWeapon && p.PendingWeapon == WP_NOCHANGE)
+		{
+			back.bOffhandWeapon = true;
+			p.PendingWeapon = back;
+			pmo.BringUpWeapon();
+		}
+	}
+
+	// WHAT LETTING GO MEANS, decided once. Called at the release, or -- when the draw was still
+	// crossing the network at that moment -- replayed from what was true then.
+	private void spendRelease(bool atRestSpot, bool moving, Vector3 rel)
+	{
+		if (atRestSpot || !moving) { SendNetworkEvent("rs-ss-stow"); return; }
+		// THE RELEASE VELOCITY RIDES WITH THE THROW. It is measured on the local player's machine
+		// only, and every machine launches from these numbers (RS_ShieldSaw.MeasureRelease).
+		// Thousandths of a map unit per tic, so a gentle lob survives the trip.
+		SendNetworkEvent("rs-ss-throw", int(rel.x), int(rel.y), int(rel.z));
 	}
 
 	// EDGES ARE DETECTED LOCALLY AND SENT. mGripWas is updated on every tic
@@ -446,6 +483,24 @@ class RS_ShieldState : EventHandler
 			}
 		}
 
+		// PUBLISH THE SHIELD HAND'S POSE, from this machine only, while the shield is out or in the
+		// air. Five ints in thousandths. Every machine's guard sweep, lock cone and homing disc read
+		// what arrives, so they cannot disagree -- see RS_ShieldSaw's pose note.
+		//
+		// Every other tic: the guard is 28 units across and a fast missile covers ten in a tic, so
+		// half rate is well inside the window, and it halves the traffic.
+		if (multiplayer && (level.time % 2) == 0)
+		{
+			let saw = RS_ShieldSaw(pmo.FindInventory("RS_ShieldSaw"));
+			int st2 = mState[consoleplayer];
+			if (saw && (st2 == SS_DRAWN || st2 == SS_FLYING))
+			{
+				Vector3 hp = saw.HandPos();
+				SendNetworkEvent("rs-ss-pose", int(hp.x * 1000.0), int(hp.y * 1000.0), int(hp.z * 1000.0));
+				SendNetworkEvent("rs-ss-aim", int(saw.HandAngle() * 1000.0), int(saw.HandPitch() * 1000.0), 0);
+			}
+		}
+
 		bool grip = pmo.GripHeldOff;
 		bool was  = mGripWas;
 		mGripWas  = grip;
@@ -472,22 +527,79 @@ class RS_ShieldState : EventHandler
 
 		if (grip && !was)                       // pressed
 		{
-			// REACHING FOR IT is the draw. A squeeze anywhere else is somebody
-			// else's business and we do not touch it.
-			if (st == SS_STOWED && mAtShoulder && offHandFree(pmo))
-				SendNetworkEvent("rs-ss-draw");
+			// REACHING FOR IT is the draw, and the press OPENS A WINDOW rather than being spent on
+			// the spot. A hand crossing the mount and an arbiter that answers one tic late are the
+			// two ways a real squeeze used to vanish, and both are the same fix: keep asking while
+			// the finger is still down.
+			if (st == SS_STOWED)
+			{
+				mDrawWant = int(clamp(cvNum("rs_ss_press_window", p, 10.0), 1.0, 70.0));
+				mDrawSent = 0;
+			}
 			else if (st == SS_FLYING && mAtShoulder)
 				SendNetworkEvent("rs-ss-recall");
 			else if (dbg)
 				Console.Printf("[SS] press ignored: state %d shoulder %d free %d",
 					st, mAtShoulder, offHandFree(pmo));
 		}
-		else if (!grip && was)                  // released
+
+		// THE WINDOW ITSELF. It closes the moment the shield is anywhere but stowed -- which is how
+		// it knows the draw landed -- and the cooldown stops one squeeze queueing ten events while
+		// the first is still crossing the network.
+		if (mDrawWant > 0)
+		{
+			if (st != SS_STOWED || !grip) mDrawWant = 0;
+			else
+			{
+				mDrawWant--;
+				if (mDrawSent > 0) mDrawSent--;
+				else if (mAtShoulder && offHandFree(pmo))
+				{
+					SendNetworkEvent("rs-ss-draw");
+					mDrawSent = 5;
+				}
+			}
+		}
+
+		// A RELEASE THAT BEAT THE DRAW HOME. Spent now that the shield is genuinely in the hand,
+		// from what was true when your fingers opened rather than from where they are now.
+		if (mRelQueued)
+		{
+			if (st == SS_DRAWN)
+			{
+				mRelQueued = false;
+				if (offHandMine(pmo)) spendRelease(mRelStow, true, mRelVel);
+				else                  SendNetworkEvent("rs-ss-stow");
+			}
+			else if (st == SS_STOWED && mDrawWant <= 0 && mDrawSent <= 0)
+			{
+				mRelQueued = false;   // the draw never happened; there is nothing to let go of
+			}
+		}
+
+		if (!grip && was)                       // released
 		{
 			// ONLY IF WE OWN THE HAND. Without this, drawing with the bound key
 			// and then gripping anything at all -- a barrel, the pouch, a
 			// foregrip -- launched the shield the moment you let go.
-			if (st == SS_DRAWN && offHandMine(pmo))
+			// A DRAW STILL IN FLIGHT. The shield is not in your hand yet as far as the playsim is
+			// concerned, so there is nothing to throw -- but you have already thrown it. Keep the
+			// gesture and spend it when it arrives.
+			if (st != SS_DRAWN && (mDrawWant > 0 || mDrawSent > 0))
+			{
+				// PLAIN BRANCHES, NOT A CONDITIONAL. A vector produced by `?:` -- especially with a
+				// vector literal on one side -- is one of the two ZScript landmines this tree hit on
+				// 2026-09-18 (the other being an `out Vector` parameter, which killed the shield's
+				// whole class at load). Neither is caught by a -norun compile check. Do not fold
+				// this back into one line.
+				let heldSaw = RS_ShieldSaw(pmo.FindInventory("RS_ShieldSaw"));
+				mRelVel = (0, 0, 0);
+				if (heldSaw) mRelVel = RS_ShieldSaw.MeasureRelease(pmo, heldSaw.HandIndex());
+				mRelStow   = (MountMode(p) == 1) ? false : (mAtShoulder || !HandMoving(pmo));
+				mRelQueued = true;
+				mDrawWant  = 0;
+			}
+			else if (st == SS_DRAWN && offHandMine(pmo))
 			{
 				// PUT IT BACK where you got it: releasing at the shoulder
 				// re-holsters instead of throwing. Everywhere else, a release
@@ -500,19 +612,10 @@ class RS_ShieldState : EventHandler
 				// forearm option could never throw at all. Wrist speed alone
 				// decides it in that mode.
 				bool atRestSpot = (MountMode(p) == 1) ? false : mAtShoulder;
-				if (atRestSpot)           SendNetworkEvent("rs-ss-stow");
-				else if (HandMoving(pmo))
-				{
-					// THE RELEASE VELOCITY RIDES WITH THE THROW. It is measured HERE,
-					// because this poll runs for the local player only, and every
-					// machine launches from these numbers (RS_ShieldSaw.MeasureRelease).
-					// Thousandths of a map unit per tic, so a gentle lob survives.
-					let heldSaw = RS_ShieldSaw(pmo.FindInventory("RS_ShieldSaw"));
-					Vector3 rel = (0, 0, 0);
-					if (heldSaw) rel = RS_ShieldSaw.MeasureRelease(pmo, heldSaw.HandIndex());
-					SendNetworkEvent("rs-ss-throw", int(rel.x), int(rel.y), int(rel.z));
-				}
-				else                      SendNetworkEvent("rs-ss-stow");
+				let heldSaw = RS_ShieldSaw(pmo.FindInventory("RS_ShieldSaw"));
+				Vector3 rel = (0, 0, 0);
+				if (heldSaw) rel = RS_ShieldSaw.MeasureRelease(pmo, heldSaw.HandIndex());
+				spendRelease(atRestSpot, HandMoving(pmo), rel);
 			}
 		}
 	}
@@ -541,10 +644,36 @@ class RS_ShieldState : EventHandler
 
 	override void NetworkProcess(ConsoleEvent e)
 	{
+		// THE PUBLISHED POSE. Two events because a ConsoleEvent carries three ints and a pose is five;
+		// they are sent on the same tic and applied in order, so the pair is never half-old by more
+		// than the tic they share.
+		if (e.Name ~== "rs-ss-pose" || e.Name ~== "rs-ss-aim")
+		{
+			let p = players[e.Player];
+			if (!p || !p.mo) return;
+			let saw = RS_ShieldSaw(p.mo.FindInventory("RS_ShieldSaw"));
+			if (!saw) return;
+			if (e.Name ~== "rs-ss-pose")
+				saw.PublishPose((e.Args[0] / 1000.0, e.Args[1] / 1000.0, e.Args[2] / 1000.0),
+				                saw.netHandAngle, saw.netHandPitch);
+			else
+				saw.PublishPose(saw.netHandPos, e.Args[0] / 1000.0, e.Args[1] / 1000.0);
+			return;
+		}
 		if (e.Name ~== "rs-ss-draw")        Draw(e.Player);
 		else if (e.Name ~== "rs-ss-throw")  ThrowNow(e.Player, e.Args[0], e.Args[1], e.Args[2]);
 		else if (e.Name ~== "rs-ss-stow")   Stow(e.Player);
 		else if (e.Name ~== "rs-ss-recall") RecallNow(e.Player);
+		else if (e.Name ~== "rs-ss-throwkey")
+		{
+			// THE DESKTOP PLAYER'S THROW. The toggle key's drawn branch stows, and the gesture's throw is
+			// decided by HandMoving() inside the console-local grip poll -- which a desktop co-op player
+			// never runs, so they could draw the shield and never throw it.
+			//
+			// Zero release velocity, which LaunchNow already handles: with nothing painted it flies the
+			// AIMED line, and with a route it steers that instead. No hand is read on this path.
+			if (StateOf(e.Player) == SS_DRAWN) ThrowNow(e.Player, 0, 0, 0);
+		}
 		else if (e.Name ~== "rs-ss-toggle")
 		{
 			// The bound key. Same transitions as the gesture, so the two paths
@@ -697,6 +826,9 @@ class RS_ShieldState : EventHandler
 		mPrevOff[pnum]  = null;
 		mPrevMain[pnum] = null;
 
+		// BY THE SWITCH, AND ONLY THE SWITCH. This pack plays with any weapon pack, so it knows no player
+		// class: a pack whose class always starts with the ShieldSaw gives it by name from its own side
+		// (RS_VR_Weapons: WM_WeaponSet.GiveStartShieldSaw), and this grant then finds it carried.
 		if (!cvOn("rs_ss_start", p, true)) return;
 		if (pmo.FindInventory("RS_ShieldSaw")) return;
 

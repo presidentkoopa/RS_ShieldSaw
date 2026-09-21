@@ -1,3 +1,8 @@
+// RS_ShieldSaw, standalone again (2026-09-21). It lived inside RS_VR_Weapons from 09-14 to 09-21;
+// the owner took it back out so it plays with any weapon pack on its own. Every name is unchanged,
+// so saved values and bindings carry over from the folded build.
+
+
 // RS_ShieldSaw.
 //
 // AddOptionMenu appends to the engine's own Options menu rather than replacing
@@ -140,3 +145,4 @@ AddOptionMenu "RS_ShieldSaw_Options"
 	StaticText "screen -- occluded by doorframes, lit by the room,", "DarkGray"
 	StaticText "and visible to other players.", "DarkGray"
 }
+

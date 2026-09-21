@@ -1,3 +1,8 @@
+// RS_ShieldSaw, standalone again (2026-09-21). It lived inside RS_VR_Weapons from 09-14 to 09-21;
+// the owner took it back out so it plays with any weapon pack on its own. Every name is unchanged,
+// so saved values and bindings carry over from the folded build.
+
+
 // RS_ShieldSaw models.
 //
 // Meshes are the originals. shield.md3 is the shield body, frames 0 (closed)
@@ -258,6 +263,10 @@ Model RS_ShieldSawProp
 	NOAUTOREVERSE
 	FollowMainHand
 	PlacementCVars rs_ss_prop
+	// SEATED LIKE EVERY GUN HERE, a quarter turn from the mesh's own axes (the guns' placement yaw is -90):
+	// the shield's face lies along the forearm like a buckler, not square across it (the owner, 09-14).
+	// In the block, not the cvar default, so a saved rs_ss_prop yaw of 0 means aligned.
+	AngleOffset -90.0
 	FrameIndex SSNH A 0 0	FrameIndex SSNH A 1 0
 	FrameIndex SSNH B 0 1	FrameIndex SSNH B 1 1
 	FrameIndex SSNH C 0 2	FrameIndex SSNH C 1 2
@@ -279,6 +288,10 @@ Model RS_ShieldSawPropOff
 	NOAUTOREVERSE
 	FollowOffHand
 	PlacementCVars rs_ss_prop_off
+	// SEATED LIKE EVERY GUN HERE, a quarter turn from the mesh's own axes (the guns' placement yaw is -90):
+	// the shield's face lies along the forearm like a buckler, not square across it (the owner, 09-14).
+	// In the block, not the cvar default, so a saved rs_ss_prop yaw of 0 means aligned.
+	AngleOffset -90.0
 	FrameIndex SSNH A 0 0	FrameIndex SSNH A 1 0
 	FrameIndex SSNH B 0 1	FrameIndex SSNH B 1 1
 	FrameIndex SSNH C 0 2	FrameIndex SSNH C 1 2
@@ -288,3 +301,4 @@ Model RS_ShieldSawPropOff
 	FrameIndex SSNH G 0 3	FrameIndex SSNH G 1 6
 	FrameIndex SSNH H 0 3	FrameIndex SSNH H 1 7
 }
+

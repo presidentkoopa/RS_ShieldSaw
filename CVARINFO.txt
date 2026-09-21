@@ -1,7 +1,18 @@
+// RS_ShieldSaw, standalone again (2026-09-21). It lived inside RS_VR_Weapons from 09-14 to 09-21;
+// the owner took it back out so it plays with any weapon pack on its own. Every name is unchanged,
+// so saved values and bindings carry over from the folded build.
+
+
+// THE FOLD (09-14, the build lane's ruling, RS_Grenade ffff0c6's twin): the game rules below are SERVER --
+// rs_ss_start, rs_ss_cut_damage, rs_ss_throw_speed, rs_ss_throw_min, rs_ss_locks, rs_ss_lock_cone, rs_ss_lock_range, rs_ss_deflect, rs_ss_deflect_stowed.
+// Everything else stays `user`, which CVARINFO makes a userinfo cvar (d_main.cpp ParseCVarInfo), so the
+// per-player choices this code reads through the acting player (equip, gesture, mount_*) already travel
+// to every machine; placement and debug are presentation.
+
 // RS_ShieldSaw.
 
 // Start the game with it, no pickup needed.
-user bool  rs_ss_start       = true;
+server bool  rs_ss_start       = true;
 
 // Drive the sequence from the off-hand GRIP: squeeze to draw it off the
 // forearm, hold to keep it, release to throw. Off falls back to the bound key.
@@ -15,13 +26,13 @@ user bool  rs_ss_equip       = false;
 user bool  rs_ss_handmodel   = true;
 
 // ---- lock-on -------------------------------------------------------------
-user int   rs_ss_locks       = 5;        // targets one throw can visit
-user float rs_ss_lock_cone   = 14.0;     // acquire half-angle, from the HAND
-user float rs_ss_lock_range  = 1200.0;
+server int   rs_ss_locks       = 5;        // targets one throw can visit
+server float rs_ss_lock_cone   = 14.0;     // acquire half-angle, from the HAND
+server float rs_ss_lock_range  = 1200.0;
 
 // ---- throw ---------------------------------------------------------------
-user float rs_ss_throw_speed = 1.0;
-user float rs_ss_cut_damage  = 1.0;
+server float rs_ss_throw_speed = 1.0;
+server float rs_ss_cut_damage  = 1.0;
 
 // HOW FAST YOUR HAND HAS TO BE MOVING, in map units per second (NOT per tic --
 // see HandMoving() in rs_shieldsaw_state.zs), for a release away from the
@@ -31,18 +42,35 @@ user float rs_ss_cut_damage  = 1.0;
 // release. In forearm mode this is the ONLY thing that decides throw vs.
 // stow, since the forearm has no separate "put it back" spot to release at.
 // vr_vunits_per_meter is ~34 by default, so 25 is a shade under 3/4 m/s.
-user float rs_ss_throw_min   = 25.0;
+server float rs_ss_throw_min   = 25.0;
 
 // ---- passive -------------------------------------------------------------
 // The deflector exists only while the shield is IN YOUR HAND. Throwing it
 // costs you the guard; that is the point.
-user bool  rs_ss_deflect     = true;
+server bool  rs_ss_deflect     = true;
 
 // Whether the shield still deflects while STOWED -- on the off forearm or the
 // shoulder, whichever rs_ss_mount_mode has it on. On is the point of a mount
 // you can leave a guard sitting on; off means only a shield actually in your
 // hand blocks anything.
-user bool  rs_ss_deflect_stowed = true;
+server bool  rs_ss_deflect_stowed = true;
+
+// HOW BIG THE GUARD IS, and how far off the hand it sits.
+//
+// The shield in your hand is 19.7 map units across, so its own rim is a radius of about 10. 14 is
+// that plus the slack a hand that is moving needs for raising the thing to be worth doing. The
+// standoff pushes the face off the palm so the disc guards in FRONT of your fist rather than
+// through it.
+//
+// These replaced an invisible +SHOOTABLE box. Nothing shootable exists any more, so making this
+// bigger can no longer eat your own fire -- it only changes what you can block.
+server float rs_ss_guard_radius   = 14.0;
+server float rs_ss_guard_standoff = 6.0;
+
+// WHERE A TURNED SHOT GOES. On, back at whoever fired it, which is the whole fantasy. Off, mirrored
+// off the shield's face like a ball off a wall -- which is the honest physics and much harder to
+// aim with.
+server bool  rs_ss_deflect_aim    = true;
 
 // ---- the shoulder mount --------------------------------------------------
 // WHERE ON YOUR BACK the shield sits, and how close your off hand has to get
@@ -179,3 +207,18 @@ user float rs_ss_prop_off_scale = 1.0;
 // flies as it always did.
 user bool  rs_ss_spin = true;
 user float rs_ss_spin_scale = 1.0;
+
+// AND A FLOOR UNDER IT, in degrees per tic. A wrist roll of zero is the common case -- no
+// RS_WorldHands, or simply a straight overhand throw with no twist in it -- and taking that
+// literally left the disc facing one way for its whole flight. The wrist rides on top of this
+// rather than replacing it. 26 is about three quarters of a turn a second.
+user float rs_ss_spin_base = 26.0;
+
+// HOW LONG A SQUEEZE KEEPS ASKING FOR THE SHIELD, in tics.
+//
+// The draw used to be a single-tic edge: it fired only if your hand was inside the mount's reach
+// AND the grip arbiter answered "free" on the exact tic your finger closed, and a press that missed
+// either was spent -- you squeezed, nothing happened, and the only way to retry was to let go. The
+// window keeps asking while you hold the grip. 10 tics is under a third of a second.
+user float rs_ss_press_window = 10.0;
+

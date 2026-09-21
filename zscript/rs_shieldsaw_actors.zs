@@ -6,8 +6,7 @@
 //                       through each target, returns to be caught.
 //   RS_ShieldTrail       its flight trail.
 //   RS_ShieldLockMark    the marker sitting on a locked enemy.
-//   RS_ShieldDeflector   the invisible guard that turns projectiles away while
-//                       the shield is in hand.
+//   (the passive guard is no longer an actor -- see RS_ShieldSaw.sweepDeflect)
 //   RS_ShieldSawPuff     what the grind leaves behind.
 
 // ==========================================================================
@@ -49,6 +48,12 @@ class RS_ShieldInFlight : Actor
 	// flight. throwRoll below was sampled ONCE and held, which is a facing, not
 	// a spin.
 	double          spinRate;
+	// WHERE IN ITS TURN THE DISC IS. Advanced by spinRate every tic and written to PITCH, which is
+	// the actor angle that turns about this mesh's face normal (models.cpp:1590 rotates pitch about
+	// GL Z = map Y, and the disc is 47 x 2.89 x 47 with its thin axis on Y). roll stays the throw
+	// PLANE, fixed at release. Putting the spin on roll instead turned the disc end over end through
+	// its own face, which is a coin spinning on a table and not a thrown shield.
+	private double  spinPhase;
 	// LastRipped in the engine is a local of P_XYMovement, rebuilt EVERY TIC --
 	// it stops a ripper re-hitting within one move, not within one pass. At
 	// Speed 22 the shield sits inside a body for about two tics, so without our
@@ -85,6 +90,7 @@ class RS_ShieldInFlight : Actor
 		leg = 0;
 		homing = false;
 		legHit = false;
+		spinPhase = throwRoll;
 		cutThisLeg.Clear();
 
 		if (route.Size() > 0)
@@ -146,10 +152,20 @@ class RS_ShieldInFlight : Actor
 
 	// HOME IS THE FOREARM. The shield returns to where it was stowed, not to
 	// the hand -- by the time it lands you are holding your own weapon again.
+	// WHERE HOME IS, AGREED BY EVERY MACHINE. This steered at master.OffhandPos every tic -- the local
+	// device's -- so a live missile took a different path on every peer and was destroyed on a
+	// different tic. It reads the launcher's published pose now, and falls back to the pawn's own
+	// shoulder height when there is none, which is playsim data everywhere.
+	Vector3 homePoint()
+	{
+		if (launcher) return launcher.NetPos();
+		return (master.pos.xy, master.pos.z + master.height * 0.75);
+	}
+
 	private void steerHome()
 	{
 		if (!master) { Destroy(); return; }
-		Vector3 hp = master.OffhandPos;
+		Vector3 hp = homePoint();
 		double ang = atan2(hp.y - pos.y, hp.x - pos.x);
 		double pit = -atan2(hp.z - pos.z, max(1.0, (hp.xy - pos.xy).Length()));
 		Vel3DFromAngle(Speed * speedMult * 1.6, ang, pit);
@@ -175,8 +191,9 @@ class RS_ShieldInFlight : Actor
 		// Advanced every tic rather than set once: a single angle change at
 		// release is an object facing a different way for its whole flight,
 		// which looks worse than not trying.
-		throwRoll += spinRate;
-		roll = throwRoll;
+		spinPhase += spinRate;
+		roll  = throwRoll;    // the plane you threw it in
+		pitch = spinPhase;    // the disc turning within that plane
 
 		if (level.time % 2 == 0)
 		{
@@ -194,7 +211,7 @@ class RS_ShieldInFlight : Actor
 		if (homing)
 		{
 			steerHome();
-			Vector3 hp = (hand != 0) ? master.OffhandPos : master.AttackPos;
+			Vector3 hp = homePoint();
 			// The window has to be at least one tic of travel wide, or a fast
 			// shield steps straight past the hand and orbits.
 			if (Level.Vec3Diff(pos, hp).Length() < max(40.0, vel.Length() * 1.2))
@@ -382,125 +399,20 @@ class RS_ShieldLockMark : Actor
 	}
 }
 
-// ==========================================================================
-// THE PASSIVE DEFLECTOR
-// ==========================================================================
+// THE PASSIVE GUARD IS NOT AN ACTOR ANY MORE.
 //
-// Stock +REFLECTIVE does the work: a missile striking a reflective actor is
-// turned around and sent back at whoever fired it.
+// RS_ShieldDeflector lived here: an invisible +SHOOTABLE +REFLECTIVE box riding the hand, with a
+// CanCollideWith override meant to let your own fire through. That override was never called --
+// PIT_CheckThing only asks P_CanCollideWith when the VICTIM is MF_SOLID, TOUCHY or BUMPSPECIAL
+// (p_map.cpp:1550) and the guard was none of them -- so your own missiles detonated on it and your
+// own hitscans died on it, while what it actually blocked was a box far smaller than the shield and
+// pointed by the hand's yaw alone.
 //
-// NOT +SOLID -- a solid actor riding your forearm would shove monsters and
-// trap you inside it. NOT +THRUACTORS either: PIT_CheckThing skips the
-// collision outright if EITHER party has that flag, so a THRUACTORS shield is
-// one that missiles fly straight through. It would look installed and block
-// nothing.
-
-class RS_ShieldDeflector : Actor
-{
-	Default
-	{
-		// SMALL, AND IT HAS TO BE. An actor whose bounding box CONTAINS a trace
-		// origin is pushed as an intercept at frac 0, and a hitscan has no
-		// victim-side way to opt out -- so a box big enough to swallow the hand
-		// eats every shot the player fires, from any weapon, at zero range.
-		// Measured: 0 damage to an imp 140 units away.
-		//
-		// Small, and sat a full radius clear of the hand (see holdDeflector),
-		// keeps the trace origin outside the box. In the non-VR fallback
-		// AttackPos == OffhandPos, so this matters there most of all.
-		Radius 10;
-		Height 28;
-		Health 1000;
-		Mass 1;
-		+SHOOTABLE
-		+REFLECTIVE
-		+AIMREFLECT
-		+NOGRAVITY
-		+NOBLOOD
-		+NOPAIN
-		+DONTTHRUST
-		+DONTRIP
-		Species "RS_ShieldSaw";
-		+NOTARGET
-		// Without this a +SHOOTABLE actor riding your hand is a legal autoaim
-		// target, so the OTHER hand's weapon aims at your shield. Note the
-		// engine gate is `!cl_doautoaim && ... && MF6_NOTAUTOAIMED`, so this
-		// only helps while autoaim is off -- it is not unconditional.
-		+NOTAUTOAIMED
-		// No +NODAMAGE: MF5_NODAMAGE is only consulted inside P_DamageMobj's
-		// native body, and DamageMobj below returns without calling Super, so
-		// the flag never ran. Returning 0 is what actually makes it immune.
-		+INVISIBLE
-		+NOTONAUTOMAP
-	}
-
-	private bool suppressed;
-
-	// YOUR OWN SHOTS PASS STRAIGHT THROUGH -- restored, having been lost in a
-	// rewrite. This is live now: the CanCollideWith gate in PIT_CheckThing was
-	// widened to fire for a missile striking a SHOOTABLE actor, and
-	// P_CanCollideWith calls the virtual on the victim with passive = true.
-	//
-	// Without it a rocket fired past your own shield detonates in your hand --
-	// measured at 128 self-damage.
-	//
-	// The RS_ShieldInFlight clause also stops a co-op partner's thrown shield
-	// exploding on YOUR guard: +DONTRIP makes the engine skip the rip branch,
-	// so it would be blocked and detonate.
-	override bool CanCollideWith(Actor other, bool passive)
-	{
-		if (!other || !master) return true;
-		if (other == master) return false;
-		if (other.bMissile && other.target == master) return false;
-		if (other is "RS_ShieldInFlight") return false;
-		return true;
-	}
-
-	// Our owner's own shots must not come home. DamageMobj runs BEFORE the
-	// engine reads bReflective -- PIT_CheckThing damages, then P_XYMovement
-	// reflects -- so clearing the flag there stops that one missile being
-	// turned around. This puts it back. The original never did, which is why
-	// firing through your own shield disabled it permanently.
-	override void Tick()
-	{
-		if (suppressed) { bReflective = true; suppressed = false; }
-		Super.Tick();
-	}
-
-	override int DamageMobj(Actor inflictor, Actor source, int damage, Name mod, int flags, double angle)
-	{
-		// MISSILES ONLY. `source == master` also matches the player's own splash
-		// damage and melee, and each of those was clearing bReflective until the
-		// deflector's next tick -- a one-tic hole an enemy missile could arrive
-		// in and detonate instead of bouncing.
-		// DIRECT IMPACTS ONLY. A rocket's SPLASH passes the rocket itself as
-		// inflictor with bMissile set, so your own explosive still cleared
-		// bReflective for a tic -- exactly the hole this was meant to close.
-		bool own = master && inflictor && inflictor.bMissile
-		           && !(flags & DMG_EXPLOSION)
-		           && (source == master || inflictor.target == master);
-		if (own)
-		{
-			bReflective = false;
-			suppressed = true;
-			return 0;
-		}
-
-		if (inflictor && inflictor.bMissile)
-		{
-			A_StartSound("rsshield/hit", CHAN_BODY);
-			level.VRHaptic(1, 0.7, 50.0);
-		}
-		return 0;
-	}
-
-	States
-	{
-	Spawn:
-		TNT1 A -1;
-		Stop;
-	}
-}
+// RS_ShieldSaw.sweepDeflect tests a swept disc instead, with the face normal the hand really points.
+// Nothing shootable exists, so nothing of yours can run into it. See the note above that function.
+//
+// RS_ShieldSawPuff below keeps its Species/ALLOWTHRUFLAGS pair even so: it costs nothing, and it is
+// the right answer again the moment anything else of ours wants to sit near a trace origin.
 
 // ==========================================================================
 // GRIND IMPACT
