@@ -102,6 +102,12 @@ OptionMenu "RS_ShieldSaw_Options"
 	Slider "Scale",          "rs_ss_held_scale",   0.1, 5.0, 0.05, 2
 
 	StaticText ""
+	StaticText "IN YOUR HAND AS A WORLD OBJECT -- MOVES LIVE", "Gold"
+	StaticText "What you actually see with 'Draw as a world object' on (the default).", "DarkGray"
+	Submenu "Where it sits -- in the off hand", "RS_ShieldSaw_Place_Off"
+	Submenu "Where it sits -- in the main hand", "RS_ShieldSaw_Place_Main"
+
+	StaticText ""
 	StaticText "Lock-on", 1
 	Slider "Targets per throw",   "rs_ss_locks",       1, 16, 1, 0
 	Slider "Aim cone (degrees)",  "rs_ss_lock_cone",   2.0, 60.0, 1.0, 0
@@ -146,3 +152,54 @@ AddOptionMenu "RS_ShieldSaw_Options"
 	StaticText "and visible to other players.", "DarkGray"
 }
 
+
+// ---- THE WORLD OBJECT'S PLACEMENT, ONE PAGE A HAND ----------------------------------------------
+// rs_ss_prop / rs_ss_prop_off are the PlacementCVars of RS_ShieldSawProp / RS_ShieldSawPropOff -- the
+// shield you actually hold with "Draw as a world object" on, which is the default. They had cvars and
+// no sliders; the "Held in hand" rows above move the old sprite-drawn shield, which the world object
+// replaces. The renderer reads these, so they move the shield while the menu is open (the owner,
+// 2026-09-21: "live sliders which i can see change the gun while still in menu").
+
+// LINT-LIVE: RS_ShieldSaw_Place_Off
+OptionMenu "RS_ShieldSaw_Place_Off"
+{
+	Title "SHIELD SAW -- OFF HAND"
+	StaticText "Hold the shield in your off hand, then drag. It moves as you drag it.", 1
+	StaticText ""
+	StaticText "WHERE IT SITS -- MOVES LIVE", "Gold"
+	Slider "Left / right",   "rs_ss_prop_off_ofs_x", -100.0, 100.0, 0.25, 2
+	Slider "Forward / back", "rs_ss_prop_off_ofs_y", -100.0, 100.0, 0.25, 2
+	Slider "Down / up",      "rs_ss_prop_off_ofs_z", -100.0, 100.0, 0.25, 2
+	StaticText ""
+	StaticText "HOW IT IS TURNED -- MOVES LIVE", "Gold"
+	Slider "Yaw",   "rs_ss_prop_off_yaw",   -180, 180, 1, 0
+	Slider "Pitch", "rs_ss_prop_off_pitch", -180, 180, 1, 0
+	Slider "Roll",  "rs_ss_prop_off_roll",  -180, 180, 1, 0
+	StaticText ""
+	StaticText "HOW BIG IT IS -- MOVES LIVE", "Gold"
+	Slider "Size", "rs_ss_prop_off_scale", 0.05, 4.0, 0.01, 2
+	StaticText ""
+	SafeCommand "Reset this hand", "resetcvar rs_ss_prop_off_ofs_x; resetcvar rs_ss_prop_off_ofs_y; resetcvar rs_ss_prop_off_ofs_z; resetcvar rs_ss_prop_off_yaw; resetcvar rs_ss_prop_off_pitch; resetcvar rs_ss_prop_off_roll; resetcvar rs_ss_prop_off_scale"
+}
+
+// LINT-LIVE: RS_ShieldSaw_Place_Main
+OptionMenu "RS_ShieldSaw_Place_Main"
+{
+	Title "SHIELD SAW -- MAIN HAND"
+	StaticText "Hold the shield in your main hand, then drag. It moves as you drag it.", 1
+	StaticText ""
+	StaticText "WHERE IT SITS -- MOVES LIVE", "Gold"
+	Slider "Left / right",   "rs_ss_prop_ofs_x", -100.0, 100.0, 0.25, 2
+	Slider "Forward / back", "rs_ss_prop_ofs_y", -100.0, 100.0, 0.25, 2
+	Slider "Down / up",      "rs_ss_prop_ofs_z", -100.0, 100.0, 0.25, 2
+	StaticText ""
+	StaticText "HOW IT IS TURNED -- MOVES LIVE", "Gold"
+	Slider "Yaw",   "rs_ss_prop_yaw",   -180, 180, 1, 0
+	Slider "Pitch", "rs_ss_prop_pitch", -180, 180, 1, 0
+	Slider "Roll",  "rs_ss_prop_roll",  -180, 180, 1, 0
+	StaticText ""
+	StaticText "HOW BIG IT IS -- MOVES LIVE", "Gold"
+	Slider "Size", "rs_ss_prop_scale", 0.05, 4.0, 0.01, 2
+	StaticText ""
+	SafeCommand "Reset this hand", "resetcvar rs_ss_prop_ofs_x; resetcvar rs_ss_prop_ofs_y; resetcvar rs_ss_prop_ofs_z; resetcvar rs_ss_prop_yaw; resetcvar rs_ss_prop_pitch; resetcvar rs_ss_prop_roll; resetcvar rs_ss_prop_scale"
+}
