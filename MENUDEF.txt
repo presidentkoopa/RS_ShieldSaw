@@ -83,9 +83,9 @@ OptionMenu "RS_ShieldSaw_Options"
 
 	StaticText ""
 	StaticText "Stowed on forearm -- position on the hand", 1
-	Slider "Left / Right",   "rs_ss_stow_ofs_x", -30.0, 30.0, 0.5, 1
-	Slider "Forward / Back", "rs_ss_stow_ofs_y", -30.0, 30.0, 0.5, 1
-	Slider "Down / Up",      "rs_ss_stow_ofs_z", -30.0, 30.0, 0.5, 1
+	Slider "Left / Right",   "rs_ss_stow_ofs_x", -10.2, 10.2, 0.17, 1
+	Slider "Forward / Back", "rs_ss_stow_ofs_y", -10.2, 10.2, 0.17, 1
+	Slider "Down / Up",      "rs_ss_stow_ofs_z", -10.2, 10.2, 0.17, 1
 	Slider "Yaw",            "rs_ss_stow_yaw",  -180.0, 180.0, 1.0, 1
 	Slider "Pitch",          "rs_ss_stow_pitch",-180.0, 180.0, 1.0, 1
 	Slider "Roll",           "rs_ss_stow_roll", -180.0, 180.0, 1.0, 1
@@ -167,9 +167,9 @@ OptionMenu "RS_ShieldSaw_Place_Off"
 	StaticText "Hold the shield in your off hand, then drag. It moves as you drag it.", 1
 	StaticText ""
 	StaticText "WHERE IT SITS -- MOVES LIVE", "Gold"
-	Slider "Left / right",   "rs_ss_prop_off_ofs_x", -100.0, 100.0, 0.25, 2
-	Slider "Forward / back", "rs_ss_prop_off_ofs_y", -100.0, 100.0, 0.25, 2
-	Slider "Down / up",      "rs_ss_prop_off_ofs_z", -100.0, 100.0, 0.25, 2
+	Slider "Left / right",   "rs_ss_prop_off_ofs_x", -34.0, 34.0, 0.085, 2
+	Slider "Forward / back", "rs_ss_prop_off_ofs_y", -34.0, 34.0, 0.085, 2
+	Slider "Down / up",      "rs_ss_prop_off_ofs_z", -34.0, 34.0, 0.085, 2
 	StaticText ""
 	StaticText "HOW IT IS TURNED -- MOVES LIVE", "Gold"
 	Slider "Yaw",   "rs_ss_prop_off_yaw",   -180, 180, 1, 0
@@ -189,9 +189,9 @@ OptionMenu "RS_ShieldSaw_Place_Main"
 	StaticText "Hold the shield in your main hand, then drag. It moves as you drag it.", 1
 	StaticText ""
 	StaticText "WHERE IT SITS -- MOVES LIVE", "Gold"
-	Slider "Left / right",   "rs_ss_prop_ofs_x", -100.0, 100.0, 0.25, 2
-	Slider "Forward / back", "rs_ss_prop_ofs_y", -100.0, 100.0, 0.25, 2
-	Slider "Down / up",      "rs_ss_prop_ofs_z", -100.0, 100.0, 0.25, 2
+	Slider "Left / right",   "rs_ss_prop_ofs_x", -34.0, 34.0, 0.085, 2
+	Slider "Forward / back", "rs_ss_prop_ofs_y", -34.0, 34.0, 0.085, 2
+	Slider "Down / up",      "rs_ss_prop_ofs_z", -34.0, 34.0, 0.085, 2
 	StaticText ""
 	StaticText "HOW IT IS TURNED -- MOVES LIVE", "Gold"
 	Slider "Yaw",   "rs_ss_prop_yaw",   -180, 180, 1, 0

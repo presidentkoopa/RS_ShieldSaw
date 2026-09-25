@@ -207,7 +207,7 @@ Model RS_ShieldForearmActor
 	Skin 0 "shieldsaw_b_HD.png"
 	Model 1 "shieldsaw.md3"
 	Skin 1 "shieldsaw_HD.png"
-	Scale 1.0 1.0 1.0
+	Scale 0.34 0.34 0.34
 	NOAUTOREVERSE
 	FollowOffHand
 	PlacementCVars rs_ss_stow
@@ -259,7 +259,7 @@ Model RS_ShieldSawProp
 	Skin 0 "shieldsaw_b_HD.png"
 	Model 1 "shieldsaw.md3"
 	Skin 1 "shieldsaw_HD.png"
-	Scale 1.0 1.0 1.0
+	Scale 0.34 0.34 0.34
 	NOAUTOREVERSE
 	FollowMainHand
 	PlacementCVars rs_ss_prop
@@ -284,7 +284,7 @@ Model RS_ShieldSawPropOff
 	Skin 0 "shieldsaw_b_HD.png"
 	Model 1 "shieldsaw.md3"
 	Skin 1 "shieldsaw_HD.png"
-	Scale 1.0 1.0 1.0
+	Scale 0.34 0.34 0.34
 	NOAUTOREVERSE
 	FollowOffHand
 	PlacementCVars rs_ss_prop_off
