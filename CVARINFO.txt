@@ -211,8 +211,28 @@ user float rs_ss_spin_scale = 1.0;
 // AND A FLOOR UNDER IT, in degrees per tic. A wrist roll of zero is the common case -- no
 // RS_WorldHands, or simply a straight overhand throw with no twist in it -- and taking that
 // literally left the disc facing one way for its whole flight. The wrist rides on top of this
-// rather than replacing it. 26 is about three quarters of a turn a second.
-user float rs_ss_spin_base = 26.0;
+// rather than replacing it.
+//
+// SERVER as of 2026-09-28, and 31 rather than 26. It stopped being a
+// preference the moment the glide started reading it: the spin now holds the
+// disc up, so this decides WHERE A THROWN SHIELD LANDS and every machine has
+// to agree on it.
+//
+// 31 IS MEASURED, NOT PICKED. The teeth are painted into the alpha of
+// shieldsaw_HD.png -- the mesh carries no usable periodicity at all -- and
+// there are SIXTEEN of them, agreed by both texture rings that cross them at
+// full contrast. So the disc looks IDENTICAL every 22.5 degrees, and any
+// per-frame rotation near a multiple of that wagon-wheels: it reads as slow,
+// stopped or backwards while spinning perfectly correctly.
+//
+// 31 deg/tic has the best worst-margin across 72, 90, 120 and 144 Hz -- 7.5
+// degrees of the 11.25 available -- and is still a fifth faster than the 26 it
+// replaces. The 60 that was proposed is 23.33 degrees a frame at 90Hz, which
+// is 0.83 from a whole tooth step: six revolutions a second that would have
+// LOOKED like a disc creeping forward, on the commonest headset rate there is.
+//
+// Run CardPipeline/tools/disc_teeth_texture.py before changing this.
+server float rs_ss_spin_base = 31.0;
 
 // HOW LONG A SQUEEZE KEEPS ASKING FOR THE SHIELD, in tics.
 //
@@ -222,3 +242,26 @@ user float rs_ss_spin_base = 26.0;
 // window keeps asking while you hold the grip. 10 tics is under a third of a second.
 user float rs_ss_press_window = 10.0;
 
+// ---- THROWN LIKE A DISC (added 2026-09-28) --------------------------------
+
+// What the disc weighs, for the launch speed. It keeps
+// armKg / (armKg + this) of the hand's speed, so at 5 kg off a 30 kg arm the
+// throw you make is 86% of the throw you get.
+server float rs_ss_mass_kg = 5.0;
+
+// The slowest a free throw can leave at, units per tic. The old code clamped
+// into a band around Speed, which flattened a lob and a hurl into each other;
+// this is the only part of that clamp worth keeping. A shield that cannot
+// reach anything is not a weapon.
+server float rs_ss_speed_floor = 6.0;
+
+// How fast a free-flying disc sinks, units per tic squared. It is NOGRAVITY,
+// so nothing else pulls on it at all. 0.11 is about 40% of real gravity at
+// hand scale -- a disc falls, but it takes its time about it.
+server float rs_ss_fall = 0.11;
+
+// How much the spin holds it up, against that fall. Scaled by how hard it is
+// spinning, how fast it is still going forward, and how FLAT the throw was --
+// so a sidearm throw carries and one made with the disc on edge drops. Capped
+// below rs_ss_fall, so lift can flatten a descent and never become a climb.
+server float rs_ss_lift = 0.09;

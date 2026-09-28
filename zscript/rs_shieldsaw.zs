@@ -657,6 +657,22 @@ class RS_ShieldSaw : Weapon
 	// machine alike; LaunchNow never asks the service for it. Thousandths of a
 	// map unit per tic, as the service returns them. (0, 0, 0) when nothing
 	// answers.
+	// A SERVER cvar by name, with a stated fallback.
+	//
+	// Some of these (rs_throw_arm_kg, rs_throw_scale) are declared by
+	// RS_WorldHands, which is optional -- this package has to work with it
+	// absent. An undeclared cvar in ZScript is not an error, it is 0.0, and an
+	// arm of zero mass makes every throw a drop, so every call states what it
+	// means by missing. Null player on purpose: a value that decides where a
+	// thrown thing ends up must not be reachable per player.
+	static double CvarNumServer(String n, double d)
+	{
+		let c = CVar.GetCVar(n, null);
+		if (!c) return d;
+		double v = c.GetFloat();
+		return v != 0.0 ? v : d;
+	}
+
 	static Vector3 MeasureRelease(PlayerPawn pmo, int hand)
 	{
 		ServiceIterator it = ServiceIterator.Find("RS_ThrowService");
@@ -787,7 +803,24 @@ class RS_ShieldSaw : Weapon
 		// The wrist rides ON TOP of a floor rather than replacing it, the same shape the grenade's
 		// lazy tumble already uses: a hard twist spins visibly harder, a flat throw still turns.
 		// Degrees per tic -- 26 is about three quarters of a turn a second.
-		double baseSpin = RS_ShieldSaw.cvNum("rs_ss_spin_base", owner.player, 26.0);
+		// MEASURED, NOT PICKED. The disc's teeth are painted into the alpha of
+		// shieldsaw_HD.png, not modelled -- the mesh has no usable periodicity
+		// at all -- and there are SIXTEEN of them, agreed by both texture rings
+		// that cross them at full contrast. So the disc looks IDENTICAL every
+		// 22.5 degrees, and any per-frame rotation near a multiple of that
+		// makes it wagon-wheel: it reads as slow, stopped, or turning
+		// backwards, at a spin rate that is perfectly correct.
+		//
+		// The proposal was 60 deg/tic. At 90Hz that is 23.33 degrees a frame,
+		// which is 0.83 from a whole tooth step -- the disc would have appeared
+		// to creep forwards at under a degree a frame while actually spinning
+		// at six revolutions a second. On the commonest headset rate there is.
+		//
+		// 31 is the safest rate across 72, 90, 120 and 144 Hz: its worst margin
+		// is 7.5 degrees of the 11.25 available, and it is still a fifth faster
+		// than the 26 it replaces. Tools: CardPipeline/tools/disc_teeth.py and
+		// disc_teeth_texture.py -- run them before changing this number.
+		double baseSpin = RS_ShieldSaw.cvNum("rs_ss_spin_base", owner.player, 31.0);
 		f.spinRate = (wristSpin < 0 ? -1.0 : 1.0) * max(abs(wristSpin), baseSpin);
 		f.speedMult = throwSpeed;
 		f.dmgMult   = cutDamage;
@@ -818,7 +851,32 @@ class RS_ShieldSaw : Weapon
 			double tlen = tv.Length();
 			if (tlen > 0.5)
 			{
-				double tspeed = clamp(tlen, sh.Speed * 0.5, sh.Speed * 2.0);
+				// THE ARM DECIDES, NOT A BAND AROUND THE TUNED SPEED.
+				//
+				// This used to clamp to Speed x 0.5..2, which is 11 to 44 units
+				// a tic, and that flattened the whole gesture: a lob and a hurl
+				// came out within a factor of four of each other no matter how
+				// different they felt, and anything gentler than 11 was
+				// silently promoted to 11.
+				//
+				// The disc keeps armKg / (armKg + discKg) of the hand's speed,
+				// the same one line every other thrown thing in this project
+				// now uses. A 5 kg disc off a 30 kg arm keeps 86%, so the throw
+				// you make is very nearly the throw you get -- which is the
+				// point of a disc.
+				//
+				// THE FLOOR IS THE ONLY CLAMP LEFT. Without the old band, a
+				// typical 10 u/tic throw comes out slower than yesterday's
+				// minimum, and a shield that cannot reach anything is not a
+				// weapon. 6 is about a third of Speed: slow enough to read as a
+				// gentle throw, fast enough to still arrive.
+				double armKg  = CvarNumServer("rs_throw_arm_kg", 30.0);
+				double discKg = CvarNumServer("rs_ss_mass_kg", 5.0);
+				if (armKg <= 0) armKg = 30.0;
+				double keep = armKg / (armKg + max(discKg, 0.0));
+
+				double tspeed = max(tlen * keep * CvarNumServer("rs_throw_scale", 1.0),
+				                    CvarNumServer("rs_ss_speed_floor", 6.0));
 				sh.Vel = tv / tlen * tspeed;
 				sh.angle = VectorAngle(relX, relY);
 			}

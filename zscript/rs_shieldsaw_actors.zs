@@ -208,6 +208,41 @@ class RS_ShieldInFlight : Actor
 
 		if (!master) { Destroy(); return; }
 
+		// ---- THE GLIDE ----------------------------------------------------
+		//
+		// A thrown disc does not fly a straight line and it does not drop like
+		// a brick either. It falls, slowly, and the spin holds it up -- which
+		// is the entire reason throwing a frisbee feels different from throwing
+		// a rock, and why a flat throw carries and a wobbly one does not.
+		//
+		// FREE THROWS ONLY. steerHome and aimAt both rewrite Vel outright, so
+		// anything done here would be overwritten the moment a route or the
+		// return trip takes over. That is correct rather than a limitation: a
+		// locked route IS the disc being steered, and a steered disc does not
+		// need lift.
+		//
+		// LIFT COMES OFF THREE THINGS, all of them things the player did:
+		// how hard it is spinning, how fast it is still going forward, and how
+		// FLAT the throw was. throwRoll is the plane it left the hand in, so
+		// cos of it is flatness -- a sidearm throw glides and a throw made with
+		// the disc on edge does not. Nobody has to be told this; it is how a
+		// frisbee already behaves in everyone's hands.
+		//
+		// CAPPED BELOW THE FALL, so lift can slow a descent and flatten it but
+		// never turn it into a climb. A disc that gains height on its own reads
+		// as a bug however good the reason.
+		if (!homing && route.Size() == 0)
+		{
+			double fall = RS_ShieldSaw.CvarNumServer("rs_ss_fall", 0.11);
+			double flat = abs(cos(throwRoll));
+			double fwd  = Vel.xy.Length() / max(1.0, Speed * speedMult);
+			double lift = RS_ShieldSaw.CvarNumServer("rs_ss_lift", 0.09)
+			            * clamp(abs(spinRate) / 31.0, 0.0, 1.5)
+			            * clamp(fwd, 0.0, 1.5)
+			            * flat;
+			Vel.z -= max(fall - min(lift, fall), 0.0);
+		}
+
 		if (homing)
 		{
 			steerHome();
