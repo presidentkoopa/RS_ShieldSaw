@@ -225,14 +225,27 @@ user float rs_ss_spin_scale = 1.0;
 // per-frame rotation near a multiple of that wagon-wheels: it reads as slow,
 // stopped or backwards while spinning perfectly correctly.
 //
-// 31 deg/tic has the best worst-margin across 72, 90, 120 and 144 Hz -- 7.5
-// degrees of the 11.25 available -- and is still a fifth faster than the 26 it
-// replaces. The 60 that was proposed is 23.33 degrees a frame at 90Hz, which
-// is 0.83 from a whole tooth step: six revolutions a second that would have
-// LOOKED like a disc creeping forward, on the commonest headset rate there is.
+// 66.1 IS THE SPECTACLE, CHOSEN KNOWINGLY (owner, 2026-09-28: "set spin to 66,
+// i want the spectacle"). 6.43 revolutions a second, and the fastest rate in
+// that band that is not near a tooth step:
+//
+//    72 Hz -> 32.13 deg/frame, 9.63 clear
+//    90 Hz -> 25.71 deg/frame, 3.21 clear
+//   120 Hz -> 19.28 deg/frame, 3.22 clear
+//   144 Hz -> 16.07 deg/frame, 6.43 clear
+//
+// The margin is 3.21 of the 11.25 available, against 7.5 for the safest rate
+// (31). That is the trade: it spins twice as fast and sits closer to a strobe
+// at 90 and 120 Hz. If the disc ever reads as crawling or turning backwards,
+// this number is why -- 31 is the safe one, and 37.1 is the middle.
+//
+// NOT 60, which was the original proposal and is the worst of all of them:
+// 23.33 degrees a frame at 90Hz is 0.83 from a whole tooth step, so six
+// revolutions a second would have LOOKED like a disc creeping forward, on the
+// commonest headset rate there is.
 //
 // Run CardPipeline/tools/disc_teeth_texture.py before changing this.
-server float rs_ss_spin_base = 31.0;
+server float rs_ss_spin_base = 66.1;
 
 // HOW LONG A SQUEEZE KEEPS ASKING FOR THE SHIELD, in tics.
 //

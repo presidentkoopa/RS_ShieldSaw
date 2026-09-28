@@ -816,11 +816,16 @@ class RS_ShieldSaw : Weapon
 		// to creep forwards at under a degree a frame while actually spinning
 		// at six revolutions a second. On the commonest headset rate there is.
 		//
-		// 31 is the safest rate across 72, 90, 120 and 144 Hz: its worst margin
-		// is 7.5 degrees of the 11.25 available, and it is still a fifth faster
-		// than the 26 it replaces. Tools: CardPipeline/tools/disc_teeth.py and
-		// disc_teeth_texture.py -- run them before changing this number.
-		double baseSpin = RS_ShieldSaw.cvNum("rs_ss_spin_base", owner.player, 31.0);
+		// 66.1 is the owner's call, knowingly (2026-09-28): 6.43 revolutions a
+		// second, the fastest rate in that band that is not near a tooth step.
+		// Its worst margin is 3.21 degrees of the 11.25 available, against 7.5
+		// for the safest rate (31) -- twice the spin, closer to a strobe at 90
+		// and 120 Hz. If the disc ever reads as crawling, this is why.
+		//
+		// NOT 60, which was the proposal and is the worst of all of them: 0.83
+		// from a tooth step at 90Hz. Tools: CardPipeline/tools/disc_teeth.py
+		// and disc_teeth_texture.py -- run them before changing this number.
+		double baseSpin = RS_ShieldSaw.cvNum("rs_ss_spin_base", owner.player, 66.1);
 		f.spinRate = (wristSpin < 0 ? -1.0 : 1.0) * max(abs(wristSpin), baseSpin);
 		f.speedMult = throwSpeed;
 		f.dmgMult   = cutDamage;
