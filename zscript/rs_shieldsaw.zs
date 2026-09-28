@@ -672,9 +672,53 @@ class RS_ShieldSaw : Weapon
 		return (0, 0, 0);
 	}
 
+	// THE OTHER TWO THINGS ONLY THE THROWER CAN KNOW (2026-09-28).
+	//
+	// The velocity above was moved onto the wire in 2026-09-14 and the note
+	// there is exactly right about why. It did not go far enough: LaunchNow
+	// still read two more values that exist on one machine only.
+	//
+	//   the WRIST SPIN, asked of RS_ThrowService, which samples this machine's
+	//   own controller;
+	//   the THROW ROLL, read off MainHandRoll / OffhandRoll, which the RENDERER
+	//   writes and nothing serialises.
+	//
+	// Both ran inside LaunchNow, which runs on EVERY machine. Today that only
+	// changes how the disc looks, because neither feeds the flight -- but the
+	// glide work is about to make the roll decide where it goes, and the day it
+	// does, the shield lands somewhere different on each machine for a reason
+	// nobody would find. Measured here on the thrower, carried in the event.
+	//
+	// Thousandths, as ints, because that is what the wire takes.
+	static int, int MeasureSpinAndRoll(PlayerPawn pmo, int hand, bool offhand)
+	{
+		double roll = offhand ? pmo.OffhandRoll : pmo.MainHandRoll;
+
+		double spin = 0;
+		ServiceIterator it = ServiceIterator.Find("RS_ThrowService");
+		Service sv;
+		while (sv = it.Next())
+		{
+			if (sv.GetInt("throw.hello", "", 0, 0, null, 'None') != 1) continue;
+			spin = sv.GetInt("throw.spin.roll", "", hand, 0, pmo, 'RS_ShieldSaw') / 1000.0;
+			// The player's own spin dial is spent HERE, on the sender, with the
+			// reading it scales. It is a user cvar -- a preference about this
+			// player's wrist -- so it must never be read by a machine applying
+			// somebody else's throw. Baked in, it travels as one number.
+			spin *= RS_ShieldSaw.cvNum("rs_ss_spin_scale", pmo.player, 1.0);
+			break;
+		}
+		return int(round(spin * 1000.0)), int(round(roll * 1000.0));
+	}
+
 	// relX/Y/Z: the release velocity in map units per tic, as measured on the
 	// thrower's machine and carried by rs-ss-throw (MeasureRelease above).
-	void LaunchNow(double relX = 0, double relY = 0, double relZ = 0)
+	// relX/Y/Z: the release velocity. wristSpinIn/throwRollIn: degrees per tic
+	// and degrees, both measured on the THROWER (MeasureSpinAndRoll) and carried
+	// in the event name. Nothing in here may read a controller or a
+	// renderer-owned field -- this function runs on every machine.
+	void LaunchNow(double relX = 0, double relY = 0, double relZ = 0,
+	               double wristSpinIn = 0, double throwRollIn = 0)
 	{
 		if (!owner || !owner.player || flying) return;
 		let p = owner.player;
@@ -703,10 +747,16 @@ class RS_ShieldSaw : Weapon
 		f.launcher  = self;
 		f.hand      = HandIndex();
 
-		// THE PLANE COMES FROM YOUR WRIST. OffhandRoll is the raw controller
-		// roll, so throwing sidearm sends the disc round sidearm and overhand
-		// sends it vertical -- the shield flies in the plane you threw it in.
-		f.throwRoll = bOffhandWeapon ? owner.OffhandRoll : owner.MainHandRoll;
+		// THE PLANE COMES FROM YOUR WRIST. The raw controller roll, so throwing
+		// sidearm sends the disc round sidearm and overhand sends it vertical --
+		// the shield flies in the plane you threw it in.
+		//
+		// FROM THE EVENT, NOT FROM THE PAWN. MainHandRoll and OffhandRoll are
+		// written by the renderer on the machine that has the controller and are
+		// never serialised, so reading them here -- in a function every machine
+		// runs -- gave the disc a different plane on each. Measured on the
+		// thrower now; see MeasureSpinAndRoll.
+		f.throwRoll = throwRollIn;
 		f.roll      = f.throwRoll;
 
 		// ---- THE SPIN YOUR WRIST PUT ON IT ---------------------------------
@@ -722,21 +772,12 @@ class RS_ShieldSaw : Weapon
 		//
 		// Roll specifically, because that is the axis a disc spins about: the
 		// face stays in its plane and turns within it.
-		double wristSpin = 0;
-		if (RS_ShieldSaw.cvOn("rs_ss_spin", owner.player, true))
-		{
-			ServiceIterator sit = ServiceIterator.Find("RS_ThrowService");
-			Service sv;
-			while (sv = sit.Next())
-			{
-				if (sv.GetInt("throw.hello", "", 0, 0, null, 'None') != 1) continue;
-				// Thousandths -- a Service returns an int.
-				double r = sv.GetInt("throw.spin.roll", "", HandIndex(), 0,
-					owner, 'RS_ShieldSaw') / 1000.0;
-				wristSpin = r * RS_ShieldSaw.cvNum("rs_ss_spin_scale", owner.player, 1.0);
-				break;
-			}
-		}
+		// ARRIVES MEASURED. This used to ask RS_ThrowService right here, and
+		// the service reads whichever controller the machine running it happens
+		// to have -- which in a four-player game is four different answers to
+		// one question. The scale is applied on the sender with the reading.
+		double wristSpin = RS_ShieldSaw.cvOn("rs_ss_spin", owner.player, true)
+			? wristSpinIn : 0.0;
 
 		// A THROWN SHIELD ALWAYS SPINS, and that is not a detail -- it is what makes it read as
 		// thrown rather than slid through the air. A wrist roll of zero is the common case (no

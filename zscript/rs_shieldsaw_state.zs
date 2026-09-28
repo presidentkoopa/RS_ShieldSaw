@@ -439,13 +439,31 @@ class RS_ShieldState : EventHandler
 
 	// WHAT LETTING GO MEANS, decided once. Called at the release, or -- when the draw was still
 	// crossing the network at that moment -- replayed from what was true then.
-	private void spendRelease(bool atRestSpot, bool moving, Vector3 rel)
+	private void spendRelease(PlayerPawn pmo, bool atRestSpot, bool moving, Vector3 rel)
 	{
 		if (atRestSpot || !moving) { SendNetworkEvent("rs-ss-stow"); return; }
 		// THE RELEASE VELOCITY RIDES WITH THE THROW. It is measured on the local player's machine
 		// only, and every machine launches from these numbers (RS_ShieldSaw.MeasureRelease).
 		// Thousandths of a map unit per tic, so a gentle lob survives the trip.
-		SendNetworkEvent("rs-ss-throw", int(rel.x), int(rel.y), int(rel.z));
+		//
+		// AND THE TWO THAT WOULD NOT FIT IN THE ARGS. A ConsoleEvent carries
+		// three ints and the velocity is already all three, so the wrist spin
+		// and the throw roll ride in the NAME as colon-separated thousandths.
+		// One event, so there is no ordering to get wrong -- the same trick
+		// rs-ss-pose and rs-ss-aim had to avoid by being sent as a pair.
+		//
+		// They were read inside LaunchNow until 2026-09-28, off this machine's
+		// own controller and off a renderer-owned field, in a function every
+		// machine runs. See RS_ShieldSaw.MeasureSpinAndRoll.
+		// The pawn is handed in rather than looked up from consoleplayer: both
+		// callers are the LOCAL grip poll and already hold it, and a lookup
+		// here would be a second, quieter assumption about whose machine this
+		// is in a function whose whole job is to be the one place that knows.
+		int spinT = 0, rollT = 0;
+		let saw2 = pmo ? RS_ShieldSaw(pmo.FindInventory("RS_ShieldSaw")) : null;
+		if (saw2) [spinT, rollT] = RS_ShieldSaw.MeasureSpinAndRoll(pmo, saw2.HandIndex(), saw2.bOffhandWeapon);
+		SendNetworkEvent(String.Format("rs-ss-throw:%d:%d", spinT, rollT),
+		                 int(rel.x), int(rel.y), int(rel.z));
 	}
 
 	// EDGES ARE DETECTED LOCALLY AND SENT. mGripWas is updated on every tic
@@ -568,7 +586,7 @@ class RS_ShieldState : EventHandler
 			if (st == SS_DRAWN)
 			{
 				mRelQueued = false;
-				if (offHandMine(pmo)) spendRelease(mRelStow, true, mRelVel);
+				if (offHandMine(pmo)) spendRelease(pmo, mRelStow, true, mRelVel);
 				else                  SendNetworkEvent("rs-ss-stow");
 			}
 			else if (st == SS_STOWED && mDrawWant <= 0 && mDrawSent <= 0)
@@ -615,7 +633,7 @@ class RS_ShieldState : EventHandler
 				let heldSaw = RS_ShieldSaw(pmo.FindInventory("RS_ShieldSaw"));
 				Vector3 rel = (0, 0, 0);
 				if (heldSaw) rel = RS_ShieldSaw.MeasureRelease(pmo, heldSaw.HandIndex());
-				spendRelease(atRestSpot, HandMoving(pmo), rel);
+				spendRelease(pmo, atRestSpot, HandMoving(pmo), rel);
 			}
 		}
 	}
@@ -623,13 +641,15 @@ class RS_ShieldState : EventHandler
 	// relX/Y/Z: rs-ss-throw's args, the release velocity in thousandths of a map
 	// unit per tic as the thrower's machine measured it -- the same on every
 	// machine, which is the point.
-	private void ThrowNow(int pnum, int relX = 0, int relY = 0, int relZ = 0)
+	private void ThrowNow(int pnum, int relX = 0, int relY = 0, int relZ = 0,
+	                      int spinT = 0, int rollT = 0)
 	{
 		let p = players[pnum];
 		if (!p || !p.mo) return;
 		let saw = RS_ShieldSaw(p.mo.FindInventory("RS_ShieldSaw"));
 		if (!saw || saw.flying) { Stow(pnum); return; }
-		saw.LaunchNow(relX / 1000.0, relY / 1000.0, relZ / 1000.0);
+		saw.LaunchNow(relX / 1000.0, relY / 1000.0, relZ / 1000.0,
+		              spinT / 1000.0, rollT / 1000.0);
 	}
 
 	private void RecallNow(int pnum)
@@ -661,7 +681,26 @@ class RS_ShieldState : EventHandler
 			return;
 		}
 		if (e.Name ~== "rs-ss-draw")        Draw(e.Player);
-		else if (e.Name ~== "rs-ss-throw")  ThrowNow(e.Player, e.Args[0], e.Args[1], e.Args[2]);
+		else if (e.Name.Left(12) ~== "rs-ss-throw:" || e.Name ~== "rs-ss-throw")
+		{
+			// The spin and the roll ride in the name, as thousandths. An event
+			// with no colon is one from before 2026-09-28 -- a demo, or a
+			// client that has not been updated -- and launches with zero for
+			// both, which is exactly how the shield flew before they existed.
+			int spinT = 0, rollT = 0;
+			int c1 = e.Name.IndexOf(":");
+			if (c1 >= 0)
+			{
+				String rest = e.Name.Mid(c1 + 1);
+				int c2 = rest.IndexOf(":");
+				if (c2 >= 0)
+				{
+					spinT = rest.Left(c2).ToInt();
+					rollT = rest.Mid(c2 + 1).ToInt();
+				}
+			}
+			ThrowNow(e.Player, e.Args[0], e.Args[1], e.Args[2], spinT, rollT);
+		}
 		else if (e.Name ~== "rs-ss-stow")   Stow(e.Player);
 		else if (e.Name ~== "rs-ss-recall") RecallNow(e.Player);
 		else if (e.Name ~== "rs-ss-throwkey")
