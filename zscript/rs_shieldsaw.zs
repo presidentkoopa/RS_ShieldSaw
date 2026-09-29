@@ -892,6 +892,20 @@ class RS_ShieldSaw : Weapon
 
 		f.Launch();
 
+		// WHAT THE THROW ACTUALLY WAS, written down.
+		//
+		// This was missing the first time the owner tested, and its absence was
+		// read as the shield never being thrown at all -- five real throws that
+		// produced no evidence because nobody had written any. An untelemetered
+		// path is not a quiet path, it is a path that lies about itself.
+		//
+		// Printed with the same [TELEM] prefix RS_WorldHands uses, so one grep
+		// covers the whole session. No dependency on that package: a Printf
+		// needs nothing from it.
+		Console.Printf("[TELEM] shield hand=%d speed=%.2f spin=%.1f roll=%.0f locks=%d in=(%.2f,%.2f,%.2f)",
+			HandIndex(), sh.Vel.Length(), f.spinRate, f.throwRoll, locks.Size(),
+			relX, relY, relZ);
+
 		owner.A_StartSound("rsshield/throw", HandChan());
 		owner.A_AlertMonsters(640);
 		level.VRHaptic(HandIndex(), 0.8, 60.0);

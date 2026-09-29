@@ -441,6 +441,15 @@ class RS_ShieldState : EventHandler
 	// crossing the network at that moment -- replayed from what was true then.
 	private void spendRelease(PlayerPawn pmo, bool atRestSpot, bool moving, Vector3 rel)
 	{
+		// EVERY RELEASE SAYS WHAT IT DECIDED, including the ones that decide
+		// NOT to throw. A stow and a throw look identical from outside -- the
+		// shield leaves your hand either way -- so without this a player who
+		// threw five times and got five stows has no way to tell anyone, and
+		// neither does the log.
+		Console.Printf("[TELEM] shieldrelease rest=%d moving=%d vel=(%.2f,%.2f,%.2f) -> %s",
+			atRestSpot ? 1 : 0, moving ? 1 : 0, rel.x, rel.y, rel.z,
+			(atRestSpot || !moving) ? "STOW" : "throw");
+
 		if (atRestSpot || !moving) { SendNetworkEvent("rs-ss-stow"); return; }
 		// THE RELEASE VELOCITY RIDES WITH THE THROW. It is measured on the local player's machine
 		// only, and every machine launches from these numbers (RS_ShieldSaw.MeasureRelease).
