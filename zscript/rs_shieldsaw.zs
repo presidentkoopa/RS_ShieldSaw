@@ -370,14 +370,32 @@ class RS_ShieldSaw : Weapon
 		if (!guardPlane()) return;
 		Vector3 c = guardCentre, n = guardNormal;
 
-		double reach = guardRadius + 48.0;
-		BlockThingsIterator it = BlockThingsIterator.CreateFromPos(
-			c.x, c.y, c.z - reach, reach * 2.0, reach, false);
+		// NOT A BLOCKMAP ITERATOR, AND IT NEVER COULD HAVE BEEN.
+		//
+		// This used to be BlockThingsIterator over a box of guardRadius + 48. A projectile is
+		// not in the blockmap at all: `projectile` sets MF_NOBLOCKMAP along with MF_MISSILE,
+		// and LinkToWorld skips the blockmap link for MF_NOBLOCKMAP, so the iterator could
+		// never return one. The guard was catching NOTHING -- not "1 in 5 tunnelled", not
+		// "78%", zero -- and had been since the old shootable deflector actor was removed.
+		//
+		// level.CollectMissiles is the engine's own list of live missiles, kept because the
+		// engine is the only place that sees every spawn. Radius 0 asks for all of them and
+		// the cull below is per missile, using that missile's OWN speed: the old fixed 48-unit
+		// box was the second half of the bug, because an RSB_EnemyBullet covers 80 units in a
+		// tic and could start the tic outside a 62-unit box and end it behind the shield.
+		Array<Actor> missiles;
+		level.CollectMissiles(c.x, c.y, c.z, 0, missiles);
 
-		while (it.Next())
+		for (int mi = 0; mi < missiles.Size(); mi++)
 		{
-			Actor mo = it.thing;
+			Actor mo = missiles[mi];
 			if (!mo || !mo.bMissile || mo.bNoInteraction || mo.bNoClip) continue;
+
+			// Per-missile cull: could this one possibly touch the disc this tic? Its own
+			// travel plus both radii, so nothing fast is culled by a number chosen for
+			// something slow.
+			if (level.Vec3Diff(c, mo.Pos).Length() > guardRadius + mo.radius + mo.Vel.Length())
+				continue;
 			// YOURS PASSES. Once turned, a missile's target IS you -- which is also what stops it
 			// being caught a second time on its way back out.
 			if (mo == owner || mo.target == owner || mo.master == owner) continue;
