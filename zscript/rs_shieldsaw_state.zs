@@ -136,18 +136,31 @@ class RS_ShieldState : EventHandler
 	// older than its lease as absent, and every sibling consumer re-asserts
 	// every tic. Claiming once meant the hand read as free after two seconds
 	// and another lane could take it while the shield was still in it.
+	//
+	// AND IT USED TO IGNORE THE ANSWER. The claim was asked and the engine field
+	// written over the top regardless, so a refusal changed nothing except that
+	// the arbiter went on naming an owner who no longer had the hand. The shield
+	// genuinely IS in the hand by the time this runs -- the draw already happened
+	// -- so taking the hand is the right outcome; reporting that someone else
+	// still held it was not.
+	//
+	// grip.take (arbiter PROTOCOL 3) is that same outcome said out loud: it always
+	// grants, it records who was displaced so they can find out through grip.lost,
+	// and it writes the engine field itself. Behaviour here is unchanged; the
+	// ledger stops disagreeing with it. The direct writes stay for the standalone
+	// case, which is why they were ever unconditional.
 	private void claimOffHand(PlayerPawn pmo, bool want)
 	{
 		let sv = arbiter();
 		if (want)
 		{
-			if (sv) sv.GetInt("grip.claim", "", 1, GRIPSUBJ_Grip, pmo, ARB_NAME);
-			pmo.GripClaimOff = GRIPSUBJ_Grip;
+			if (sv) sv.GetInt("grip.take", "", 1, GRIPSUBJ_Grip, pmo, ARB_NAME);
+			else    pmo.GripClaimOff = GRIPSUBJ_Grip;
 		}
 		else
 		{
 			if (sv) sv.GetInt("grip.release", "", 1, 0, pmo, ARB_NAME);
-			if (pmo.GripClaimOff == GRIPSUBJ_Grip) pmo.GripClaimOff = GRIPSUBJ_None;
+			else if (pmo.GripClaimOff == GRIPSUBJ_Grip) pmo.GripClaimOff = GRIPSUBJ_None;
 		}
 	}
 
