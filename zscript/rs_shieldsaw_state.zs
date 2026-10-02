@@ -210,11 +210,32 @@ class RS_ShieldState : EventHandler
 	// engine code scales the runtime's metres/second by vr_vunits_per_meter
 	// and stops there, unlike pmo.Vel which is per tic. Do not compare the two
 	// against the same threshold.
-	static bool HandMoving(PlayerPawn pmo)
+	// HAND, NOT ALWAYS THE OFF ONE. The shield can be carried main-hand
+	// (bOffhandWeapon false), and OffhandVel then gated the throw on the
+	// controller that was not holding it. Defaults to the off hand so an
+	// outside caller with no saw to ask behaves exactly as before.
+	static bool HandMoving(PlayerPawn pmo, int hand = 1)
 	{
 		if (!pmo) return true;
 		let p = pmo.player;
 		double minSpeed = cvNum("rs_ss_throw_min", p, 25.0);
+		// THE SAME SAMPLE THE MAGNITUDE COMES FROM. OffhandVel is the NEWEST
+		// instant, and by the time your fingers open the arm is already
+		// slowing -- so a real throw read as slow and put the shield back,
+		// while the velocity sent with it was the peak. Gate and magnitude
+		// now ask the same quarter-second render-rate ring, and the peak only
+		// counts if it is recent enough to belong to THIS release rather than
+		// to a flick made before the shield was even drawn.
+		//
+		// Map units PER SECOND on both paths, so minSpeed is unchanged.
+		// OffhandVel stays as the fallback for a machine with no samples.
+		double ageMs = level.HandPeakAgeMs(hand);
+		if (ageMs >= 0 && ageMs <= 200)
+		{
+			Vector3 pk = level.HandVelAtPoint(hand, (0, 0, 0), RS_HAND_PEAK);
+			double pkSpeed = pk.Length();
+			if (pkSpeed > 0) return pkSpeed >= minSpeed;
+		}
 		return pmo.OffhandVel.Length() >= minSpeed;
 	}
 
@@ -635,7 +656,7 @@ class RS_ShieldState : EventHandler
 				let heldSaw = RS_ShieldSaw(pmo.FindInventory("RS_ShieldSaw"));
 				mRelVel = (0, 0, 0);
 				if (heldSaw) mRelVel = RS_ShieldSaw.MeasureRelease(pmo, heldSaw.HandIndex());
-				mRelStow   = (MountMode(p) == 1) ? false : (mAtShoulder || !HandMoving(pmo));
+				mRelStow   = (MountMode(p) == 1) ? false : (mAtShoulder || !HandMoving(pmo, heldSaw ? heldSaw.HandIndex() : 1));
 				mRelQueued = true;
 				mDrawWant  = 0;
 			}
@@ -655,7 +676,7 @@ class RS_ShieldState : EventHandler
 				let heldSaw = RS_ShieldSaw(pmo.FindInventory("RS_ShieldSaw"));
 				Vector3 rel = (0, 0, 0);
 				if (heldSaw) rel = RS_ShieldSaw.MeasureRelease(pmo, heldSaw.HandIndex());
-				spendRelease(pmo, atRestSpot, HandMoving(pmo), rel);
+				spendRelease(pmo, atRestSpot, HandMoving(pmo, heldSaw ? heldSaw.HandIndex() : 1), rel);
 			}
 		}
 	}

@@ -146,7 +146,18 @@ class RS_ShieldInFlight : Actor
 		// anything it had passed through on the way out.
 		cutThisLeg.Clear();
 		homing = true;
-		ClearBounce();
+		// THE RETURN LEG HAS TO SURVIVE GEOMETRY. ClearBounce() wiped the bounce type
+		// outright, so the first wall or floor on the way home ran P_ExplodeMissile --
+		// which zeroes Vel and then clears MF_MISSILE *after* it has already run our
+		// Death state, so nothing that state does can put the flag back. The disc then
+		// drifted home cutting nothing and stopped against the next thing it touched.
+		// Bounce instead: steerHome re-aims every tic, so a bounce costs one tic of
+		// heading and nothing else. Count 0 is unlimited -- BounceCount 4 is a budget
+		// for the throw, not for getting back. Set, not merely kept, because the
+		// outbound leg may already have spent it.
+		bBOUNCEONWALLS  = true;
+		bBOUNCEONFLOORS = true;
+		bouncecount     = 0;
 		steerHome();
 	}
 
@@ -176,6 +187,16 @@ class RS_ShieldInFlight : Actor
 	{
 		Super.Tick();
 		if (bDestroyed) return;
+
+		// A LIVE DISC IS ALWAYS A MISSILE. P_ExplodeMissile clears MF_MISSILE *after*
+		// it has run our Death state, so `SFLY A 0 { GoHome(); }` cannot put the flag
+		// back however it is written -- and without it P_DoMissileDamage is never
+		// reached, so DoSpecialDamage never runs, the return leg cuts nothing, and the
+		// first wall stops the disc dead. The flag being off here means something
+		// exploded us inside Super.Tick() above, so restore it before anything moves
+		// again, and noclip just long enough to clear whatever we exploded against --
+		// the noclipFor timer further down turns it off once we have actually moved.
+		if (!bMissile) { bMissile = true; bNOCLIP = true; noclipFor = 4; }
 
 		// THE PLANE IS HELD, NOT DERIVED. Vel3DFromAngle rewrites pitch every
 		// time the shield steers, and PitchFromMomentum used to overwrite it

@@ -698,9 +698,19 @@ class RS_ShieldSaw : Weapon
 		while (sv = it.Next())
 		{
 			if (sv.GetInt("throw.hello", "", 0, 0, null, 'None') != 1) continue;
-			double mx = sv.GetInt("throw.vel.x", "", hand, 0, pmo, 'RS_ShieldSaw');
-			double my = sv.GetInt("throw.vel.y", "", hand, 0, pmo, 'RS_ShieldSaw');
-			double mz = sv.GetInt("throw.vel.z", "", hand, 0, pmo, 'RS_ShieldSaw');
+			// THE HAND'S OWN MOTION, NOT A FINISHED THROW. `throw.vel.*` has
+			// already spent rs_throw_scale and already added the thrower's own
+			// velocity -- and LaunchNow below spends mass and rs_throw_scale
+			// AGAIN, so the server scale landed on every throw twice and the
+			// player's running speed came out mass-scaled. `throw.vel.hand.*`
+			// is the request meant for a caller that applies those itself,
+			// which is what anything sending a release across the network has
+			// to be. It also answers from the engine's render-rate ring
+			// (HandVelAtPoint / HandPeakAgeMs) instead of the 35Hz one, so the
+			// peak of a flick is not lost between two tics.
+			double mx = sv.GetInt("throw.vel.hand.x", "", hand, 0, pmo, 'RS_ShieldSaw');
+			double my = sv.GetInt("throw.vel.hand.y", "", hand, 0, pmo, 'RS_ShieldSaw');
+			double mz = sv.GetInt("throw.vel.hand.z", "", hand, 0, pmo, 'RS_ShieldSaw');
 			return (mx, my, mz);
 		}
 		return (0, 0, 0);
@@ -900,7 +910,13 @@ class RS_ShieldSaw : Weapon
 
 				double tspeed = max(tlen * keep * CvarNumServer("rs_throw_scale", 1.0),
 				                    CvarNumServer("rs_ss_speed_floor", 6.0));
-				sh.Vel = tv / tlen * tspeed;
+				// THE PLAYER'S OWN MOTION, ADDED AFTER THE MASS AND THE SCALE
+				// AND NEVER BEFORE THEM -- the same order RS_Held.Release uses.
+				// It used to arrive baked inside tv, where the disc's weight
+				// slowed down the part of the throw that was only your body
+				// carrying it. Safe on every machine: pmo.Vel is playsim state,
+				// unlike the controller reading that had to travel as args.
+				sh.Vel = tv / tlen * tspeed + owner.Vel;
 				sh.angle = VectorAngle(relX, relY);
 			}
 		}
