@@ -154,7 +154,16 @@ class RS_ShieldState : EventHandler
 		let sv = arbiter();
 		if (want)
 		{
-			if (sv) sv.GetInt("grip.take", "", 1, GRIPSUBJ_Grip, pmo, ARB_NAME);
+			// TAKEN AT PRIO_SYSTEM, NOT PREEMPTABLE (owner, 2026-10-04: "when I want the
+			// shield I want the shield"). The take used to carry no rank, and so did the
+			// weapon mechanism's -- two unranked takes on the same hand, settled by whichever
+			// ran last in the tic, which was the mechanism. The shield lost a contest nobody
+			// had actually decided.
+			//
+			// 100 is the arbiter's PRIO_SYSTEM rung; 0 is preemptable=false. The shield is
+			// physically on the arm by the time this runs, so there is no state in which
+			// something else may have that hand instead.
+			if (sv) sv.GetInt("grip.take", "100 0", 1, GRIPSUBJ_Grip, pmo, ARB_NAME);
 			else    pmo.GripClaimOff = GRIPSUBJ_Grip;
 		}
 		else
