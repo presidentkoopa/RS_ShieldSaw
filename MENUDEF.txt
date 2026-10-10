@@ -131,10 +131,21 @@ OptionMenu "RS_ShieldSaw_Options"
 	Option "Start with it",       "rs_ss_start",     "OnOff"
 
 	StaticText ""
+	StaticText "Bash", 1
+	StaticText "Shove the shield forward into something and it hits.", 2
+	StaticText "Measured along the face, so swinging it sideways or", 2
+	StaticText "dropping your arm is not a bash however fast it is.", 2
+	Option "Shield bash",            "rs_ss_bash", "OnOff"
+	Slider "  How hard a shove (units/sec)", "rs_ss_bash_speed",  10, 400, 5, 0
+	Slider "  Damage",                       "rs_ss_bash_damage", 0.1, 8.0, 0.1, 1
+	StaticText "Bashing by accident? Raise the shove. A real shove", 2
+	StaticText "being ignored? Lower it.", 2
+
+	StaticText ""
 	Option "Gesture debug to console", "rs_ss_debug", "OnOff"
 
 	StaticText ""
-	SafeCommand "Reset all", "resetcvar rs_ss_mount_mode rs_ss_stow rs_ss_stow_place rs_ss_stow_ofs_x rs_ss_stow_ofs_y rs_ss_stow_ofs_z rs_ss_stow_yaw rs_ss_stow_pitch rs_ss_stow_roll rs_ss_stow_scale rs_ss_held_ofs_x rs_ss_held_ofs_y rs_ss_held_ofs_z rs_ss_held_yaw rs_ss_held_pitch rs_ss_held_roll rs_ss_held_scale rs_ss_locks rs_ss_lock_cone rs_ss_lock_range rs_ss_throw_speed rs_ss_cut_damage rs_ss_throw_min rs_ss_deflect rs_ss_deflect_stowed rs_ss_handmodel rs_ss_start rs_ss_equip rs_ss_gesture"
+	SafeCommand "Reset all", "resetcvar rs_ss_mount_mode rs_ss_stow rs_ss_stow_place rs_ss_stow_ofs_x rs_ss_stow_ofs_y rs_ss_stow_ofs_z rs_ss_stow_yaw rs_ss_stow_pitch rs_ss_stow_roll rs_ss_stow_scale rs_ss_held_ofs_x rs_ss_held_ofs_y rs_ss_held_ofs_z rs_ss_held_yaw rs_ss_held_pitch rs_ss_held_roll rs_ss_held_scale rs_ss_locks rs_ss_lock_cone rs_ss_lock_range rs_ss_throw_speed rs_ss_cut_damage rs_ss_throw_min rs_ss_deflect rs_ss_deflect_stowed rs_ss_handmodel rs_ss_start rs_ss_equip rs_ss_gesture rs_ss_bash rs_ss_bash_speed rs_ss_bash_damage"
 }
 
 AddOptionMenu "RS_ShieldSaw_Options"

@@ -108,6 +108,18 @@ class RS_ShieldSaw : Weapon
 	private Vector3 guardNormal;
 	private bool   deflectAim;
 
+	// [BASH] CODER_PLAN step 54 -- shove the shield forward into something and it hits.
+	// Read once a second with the rest of readSettings.
+	private bool   bashOn;
+	private double bashSpeed;
+	private double bashScale;
+	// PER TARGET, NOT PER SHIELD. One forward push must not bash the same imp on six
+	// consecutive tics, and it must not stop you bashing the one beside it on the next tic
+	// either -- so the cooldown is keyed on WHO was hit. Parallel arrays rather than an
+	// array of structs, which is one of the shapes that compiles clean and dies at load.
+	private Array<Actor> bashHit;
+	private Array<int>   bashWhen;
+
 	Default
 	{
 		// THE WEAPON DECLARES ITS OWN SLOT. KEYCONF's addslotdefault did not
@@ -225,7 +237,121 @@ class RS_ShieldSaw : Weapon
 
 		pruneLocks();
 		sweepDeflect();
+		sweepBash();
 		applyModel();
+	}
+
+	// ======================================================================
+	// ACTIVE -- the bash (CODER_PLAN step 54)
+	// ======================================================================
+	//
+	// THE SHIELD HAD NO OFFENCE AT ALL. The guard turns missiles and the disc cuts when
+	// thrown; shoving the thing into a face did nothing, which is the one use of a shield
+	// everybody tries first. The owner's note is "wants its behaviour MEANER".
+	//
+	// AND IT IS THE HALF OF THE GUARD THAT COULD NEVER HAVE WORKED ON MONSTERS. sweepDeflect
+	// iterates level.CollectMissiles, which is a list of MISSILES -- a monster's claw is not
+	// one and never appears in it. That is why the owner reports the shield "doesn't seem to
+	// parry monster attacks, just bullets": it is not a bug in the deflection, it is that
+	// nothing in this file ever looked at a monster. This looks at monsters.
+	//
+	// SAME ARCHITECTURE AS THE GUARD, DELIBERATELY. It runs in Tick on the machine whose
+	// headset writes the hand pose and writes playsim directly, exactly as deflect() does,
+	// with the same caveat this file already records: networking the hand pose is the real
+	// answer and is an engine question, not this file's. A second architecture for the same
+	// problem would be worse than the shared caveat.
+	//
+	// NO RNG ON THIS PATH and the damage is an explicit integer: a local path that rolls a
+	// die desynchronises a netgame. Keyed on `owner`, never consoleplayer.
+	//
+	// WHAT THE STEP ASKED FOR AND IS NOT HERE: `freezetics 6`. There is no freeze in this
+	// engine's actor API -- no FreezeTics, no bFrozen -- and inventing one out of
+	// reactiontime would be a guess about a field whose meaning differs per actor. Stun
+	// belongs to the Affect layer (AffectStunTics is exported and live), and the step itself
+	// says "later AffectHit Blunt". Forced pain already stalls the monster through its own
+	// Pain state, which is most of what the freeze was for. Left for when Affect is released.
+	private void sweepBash()
+	{
+		if (!bashOn || flying || !owner || !owner.player) return;
+		if (!isHeld()) return;              // DRAWN only: a stowed shield is not being driven
+		if (!guardPlane()) return;
+
+		let pmo = PlayerPawn(owner);
+		if (!pmo) return;
+
+		// THE HAND THE SHIELD IS ACTUALLY IN. HandIndex() already answers this for sound
+		// channels; the velocity fields are the other pair that must agree with it, or a
+		// shield in the main hand is tested against the off hand's motion.
+		Vector3 hv = (HandIndex() == 1) ? pmo.OffhandVel : pmo.AttackVel;
+
+		// ALONG THE FACE, NOT JUST FAST. Swinging the shield sideways, or dropping your arm,
+		// is not a bash however quick it is -- only motion INTO what the face is pointing at.
+		double drive = hv dot guardNormal;
+		if (drive < bashSpeed) return;
+
+		Vector3 c = guardCentre, n = guardNormal;
+		double reach = guardRadius + 4.0;
+
+		// Monsters ARE in the blockmap, unlike missiles -- which is why this can be an
+		// iterator and sweepDeflect could not.
+		let it = BlockThingsIterator.Create(owner, reach + 64.0);
+		while (it.Next())
+		{
+			Actor mo = it.thing;
+			if (!mo || mo == owner || mo.health <= 0) continue;
+			if (!mo.bShootable || mo.bNoInteraction) continue;
+			if (!mo.bIsMonster) continue;                 // not barrels, not other players
+			// Own summons and friendlies are not bashed. Written as two plain tests rather
+			// than one chained condition: `a || b && c` reads as `a || (b && c)` and the
+			// intent here is neither.
+			if (mo.master == owner) continue;
+			if (mo.bFriendly) continue;
+
+			Vector3 rel = Level.Vec3Diff(c, (mo.pos.xy, mo.pos.z + mo.height * 0.5));
+			double  d   = rel dot n;
+			if (d <= 0 || d > reach + mo.radius) continue;         // in front, and close
+			Vector3 radial = rel - n * d;
+			if (radial.Length() > guardRadius + mo.radius) continue;   // inside the disc
+
+			if (bashedRecently(mo)) continue;
+
+			// clamp(10 + 0.15 * speed, 10, 40), as the step sets it, times the slider.
+			int dmg = int(clamp(10.0 + 0.15 * drive, 10.0, 40.0) * bashScale);
+			mo.DamageMobj(owner, owner, dmg, 'Melee');
+
+			// Off the face, not away from the player: you shove where you are pointing.
+			if (mo.health > 0)
+			{
+				double push = 8.0 * 100.0 / max(mo.Mass, 50);
+				mo.Thrust(push, VectorAngle(n.x, n.y));
+				mo.TriggerPainChance('Melee', true);
+			}
+
+			owner.A_StartSound("rsshield/hit", CHAN_BODY);
+			noteBash(mo);
+		}
+	}
+
+	// 10 tics per target. level.maptime rather than GetAge(): the cooldown is about the
+	// world, and two shields in two hands must agree about when that imp was last hit.
+	private bool bashedRecently(Actor a)
+	{
+		for (int i = bashHit.Size() - 1; i >= 0; i--)
+		{
+			if (!bashHit[i] || level.maptime - bashWhen[i] > 10)
+			{
+				bashHit.Delete(i); bashWhen.Delete(i);
+				continue;
+			}
+			if (bashHit[i] == a) return true;
+		}
+		return false;
+	}
+
+	private void noteBash(Actor a)
+	{
+		bashHit.Push(a);
+		bashWhen.Push(level.maptime);
 	}
 
 	private void readSettings()
@@ -245,6 +371,12 @@ class RS_ShieldSaw : Weapon
 		guardRadius   = clamp(cvNum("rs_ss_guard_radius", p, 14.0), 2.0, 64.0);
 		guardStandoff = clamp(cvNum("rs_ss_guard_standoff", p, 6.0), 0.0, 32.0);
 		deflectAim    = cvOn("rs_ss_deflect_aim", p, true);
+		// [BASH] 70 u/s is a deliberate shove and not a walk: the arm has to be driving the
+		// shield at the thing. Its own slider because only a headset can say whether it
+		// fires when you meant it to.
+		bashOn     = cvOn("rs_ss_bash", p, true);
+		bashSpeed  = clamp(cvNum("rs_ss_bash_speed", p, 70.0), 10.0, 400.0);
+		bashScale  = clamp(cvNum("rs_ss_bash_damage", p, 1.0), 0.1, 8.0);
 	}
 
 	// A locked target that died is not a waypoint any more.

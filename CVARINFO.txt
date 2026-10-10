@@ -72,6 +72,27 @@ server float rs_ss_guard_standoff = 6.0;
 // aim with.
 server bool  rs_ss_deflect_aim    = true;
 
+// ---- the bash (CODER_PLAN step 54) ---------------------------------------
+//
+// SHOVE THE SHIELD INTO SOMETHING AND IT HITS. The shield had no offence at all: the guard
+// turns missiles, the disc cuts when thrown, and driving it into a face did nothing -- which
+// is the first thing anybody tries with a shield. Owner: "wants its behaviour MEANER".
+//
+// It also fills the hole that made the shield look like it only stops bullets. The guard
+// iterates the engine's MISSILE list, and a monster's claw is not a missile, so nothing in
+// this package had ever looked at a monster.
+//
+// _speed is measured ALONG THE SHIELD'S FACE, in map units a second, so swinging it sideways
+// or dropping your arm is not a bash however fast it is. 70 is a deliberate shove rather than
+// a walk. Raise it if you bash by accident, lower it if a real shove is ignored.
+//
+// Damage is clamp(10 + 0.15 x speed, 10, 40) x _damage, with a 10-tic cooldown PER TARGET so
+// one push cannot hit the same monster six tics running while still letting you catch the one
+// beside it. SERVER cvars, not user: they decide damage.
+server bool  rs_ss_bash        = true;
+server float rs_ss_bash_speed  = 70.0;
+server float rs_ss_bash_damage = 1.0;
+
 // ---- the shoulder mount --------------------------------------------------
 // WHERE ON YOUR BACK the shield sits, and how close your off hand has to get
 // to take it. fwd is negative because the headset sits at your EYES, so your
