@@ -142,6 +142,18 @@ OptionMenu "RS_ShieldSaw_Options"
 	StaticText "being ignored? Lower it.", 2
 
 	StaticText ""
+	StaticText "The thrown disc", 1
+	StaticText "Fodder comes apart, mid-tier takes the disc with it and", 2
+	StaticText "grinds, heavies and bosses turn it away. Sorted by the", 2
+	StaticText "monster's own authored health, so monster packs work.", 2
+	Option "Hits depend on what was hit", "rs_ss_tiers", "OnOff"
+	Slider "  Bisects at or under (health)", "rs_ss_tier_fodder", 0, 400, 5, 0
+	Slider "  Embeds at or under (health)",  "rs_ss_tier_mid",   0, 4000, 50, 0
+	Slider "  Embedded for (tics)",          "rs_ss_embed_tics", 0, 140, 1, 0
+	Slider "  Grind per tic",                "rs_ss_embed_dps",  0, 50, 1, 0
+	Slider "  Glancing damage",              "rs_ss_glance_scale", 0.0, 2.0, 0.05, 2
+
+	StaticText ""
 	Option "Gesture debug to console", "rs_ss_debug", "OnOff"
 
 	StaticText ""

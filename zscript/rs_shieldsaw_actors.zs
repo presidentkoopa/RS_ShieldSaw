@@ -61,6 +61,17 @@ class RS_ShieldInFlight : Actor
 	private Array<Actor> cutThisLeg;
 	private Vector3 prevPos;
 
+	// [TIERS] CODER_PLAN step 55 -- what a hit does depends on what was hit.
+	// The disc used to do one thing to everything: roll 24-44 and rip onward, so a
+	// zombie and a baron felt identical and the throw had no read to it.
+	//
+	// Classified on SpawnHealth, not on class names: a modded imp is still fodder and a
+	// mod's own boss is still a boss, and a name list would be wrong the first time
+	// someone loads a monster pack. Thresholds are cvars because 70 and 600 are the
+	// plan's guesses at where Doom's roster divides, and only play can say.
+	private Actor embedIn;      // the mid-tier victim the disc is buried in
+	private int   embedTics;    // how much longer it grinds there
+
 	Default
 	{
 		Speed 22;
@@ -197,6 +208,18 @@ class RS_ShieldInFlight : Actor
 		// again, and noclip just long enough to clear whatever we exploded against --
 		// the noclipFor timer further down turns it off once we have actually moved.
 		if (!bMissile) { bMissile = true; bNOCLIP = true; noclipFor = 4; }
+
+		// [TIERS] PUT +NOEXTREMEDEATH BACK (step 55). DoSpecialDamage drops it for a
+		// fodder hit so the body comes apart, and the engine reads it during that same
+		// P_DamageMobj call -- so restoring it here, on the next tic, is after the gib
+		// decision and before any other victim can be hit. A mid or heavy later in the
+		// same throw therefore keeps its body intact.
+		if (!bNOEXTREMEDEATH) bNOEXTREMEDEATH = true;
+
+		// [TIERS] EMBEDDED: grinding in a mid-tier body, so it does not steer, advance
+		// or spin-travel this tic. It still spins in place -- the phase below is the
+		// face turning, not movement.
+		if (embedTick()) return;
 
 		// THE PLANE IS HELD, NOT DERIVED. Vel3DFromAngle rewrites pitch every
 		// time the shield steers, and PitchFromMomentum used to overwrite it
@@ -354,7 +377,81 @@ class RS_ShieldInFlight : Actor
 		// target took nothing at all.
 		if (leg < route.Size() && victim == route[leg]) legHit = true;
 
-		return int(random[ShieldCut](24, 44) * clamp(dmgMult, 0.1, 10.0));
+		int roll = int(random[ShieldCut](24, 44) * clamp(dmgMult, 0.1, 10.0));
+
+		// [TIERS] WHAT THE HIT DOES, BY WHAT WAS HIT (step 55).
+		//
+		// Off: the disc behaves exactly as it did, so this cannot regress a throw that
+		// already felt right.
+		if (!RS_ShieldTier.On(self)) return roll;
+
+		int tier = RS_ShieldTier.Of(victim, self);
+
+		if (tier == RS_ShieldTier.FODDER)
+		{
+			// BISECT. +NOEXTREMEDEATH is dropped FOR THIS HIT ONLY -- it is a flag on
+			// the disc, so it is cleared here and put back on the way out, and a mid
+			// or heavy hit in the same pass still keeps its body intact. The owner
+			// answered Q43 for exactly this: "a thrown saw blade that leaves a body
+			// intact reads wrong."
+			//
+			// Damage is forced past the gib threshold rather than left to the roll: a
+			// 24 on a 60-health former human is a kill, not a bisection, and the whole
+			// point of the tier is that fodder comes apart every time.
+			bNOEXTREMEDEATH = false;
+			A_StartSound("rsshield/hit", CHAN_BODY);
+			int gib = victim.GetGibHealth();
+			return max(roll, victim.health - gib + 1);
+		}
+
+		if (tier == RS_ShieldTier.MID)
+		{
+			// EMBED. The disc buries itself and grinds, which is the Dark Ages beat the
+			// step names. Held in Tick rather than by stopping the actor: a missile with
+			// no velocity is still a missile and the engine would carry on resolving it
+			// against the world.
+			if (!embedIn)
+			{
+				embedIn   = victim;
+				embedTics = RS_ShieldTier.EmbedTics(self);
+				Vel = (0, 0, 0);
+				A_StartSound("rsshield/hit", CHAN_BODY);
+			}
+			victim.TriggerPainChance('Saw', true);
+			return roll;
+		}
+
+		// HEAVY / BOSS. It glances: a shield saw does not bury itself in a baron. The
+		// bounce is the disc's own BounceType, so this only has to decline to embed and
+		// let the engine's bounce do the work -- and the reduced damage is what makes a
+		// heavy feel like a wall rather than a slower zombie.
+		victim.TriggerPainChance('Saw', true);
+		return max(1, int(roll * RS_ShieldTier.GlanceScale(self)));
+	}
+
+	// [TIERS] The embed: hold on the victim and grind, then leave. Called from Tick.
+	private bool embedTick()
+	{
+		if (!embedIn) return false;
+
+		// GONE, DEAD, OR OUT OF TIME -- all three end it, and a dead host must not hold
+		// the disc in mid-air.
+		if (embedIn.health <= 0 || embedTics <= 0)
+		{
+			embedIn = null; embedTics = 0;
+			GoHome();
+			return false;
+		}
+
+		embedTics--;
+		// Ride the body rather than hang where it was hit: a monster that walks away
+		// with a saw in it should take the saw with it.
+		SetOrigin((embedIn.pos.xy, embedIn.pos.z + embedIn.height * 0.5), true);
+		Vel = (0, 0, 0);
+
+		int per = RS_ShieldTier.EmbedDamage(self);
+		if (per > 0) embedIn.DamageMobj(self, master, per, 'Saw');
+		return true;
 	}
 
 	// Hitting something is not a reason to stop.
@@ -378,6 +475,64 @@ class RS_ShieldInFlight : Actor
 		SFLY A 0 { GoHome(); }
 		Goto Spawn;
 	}
+}
+
+// ===========================================================================
+// [TIERS] WHAT A THROWN DISC DOES, BY WHAT IT HIT (CODER_PLAN step 55)
+// ===========================================================================
+//
+// The disc used to do one thing to everything: roll 24-44 and rip onward. A zombie and a
+// baron felt identical, so the throw had no read to it and no reason to aim.
+//
+// CLASSIFIED ON SpawnHealth, NEVER ON CLASS NAMES. A modded imp is still fodder and a
+// mod's own boss is still a boss; a name list would be wrong the first time a monster pack
+// is loaded, and wrong silently. SpawnHealth is the one number every monster declares.
+//
+// The thresholds are the plan's guesses at where Doom's roster divides -- 70 takes the
+// former humans and imps, 600 reaches the barons -- so they are cvars, because only play
+// can say where the line actually is.
+//
+// A STATIC HELPER, NOT FIELDS ON THE DISC. The disc is spawned per throw and these are
+// settings, so reading them here keeps one copy of the policy that the bash, the grind and
+// anything later can all ask.
+class RS_ShieldTier
+{
+	enum ETier
+	{
+		FODDER = 0,   // bisect: comes apart
+		MID    = 1,   // embed: the disc buries itself and grinds
+		HEAVY  = 2,   // glance: it bounces off
+	}
+
+	private static double num(string n, double fb)
+	{ let c = CVar.FindCVar(n); return c ? c.GetFloat() : fb; }
+	private static int inum(string n, int fb)
+	{ let c = CVar.FindCVar(n); return c ? c.GetInt() : fb; }
+
+	// FindCVar, not GetCVar: these are `server` cvars and decide damage, so they are the
+	// same for every peer and need no PlayerInfo. GetCVar with a null player would answer
+	// for whoever happened to be asking.
+	static bool On(Actor disc)
+	{
+		let c = CVar.FindCVar("rs_ss_tiers");
+		return c ? c.GetBool() : true;
+	}
+
+	static int Of(Actor victim, Actor disc)
+	{
+		if (!victim) return HEAVY;
+		// SpawnHealth is the monster's AUTHORED health, not what is left of it -- a baron
+		// on its last hit point is still a baron and must not suddenly bisect.
+		int sh = victim.SpawnHealth();
+		if (victim.bBoss) return HEAVY;
+		if (sh <= inum("rs_ss_tier_fodder", 70))  return FODDER;
+		if (sh <= inum("rs_ss_tier_mid", 600))    return MID;
+		return HEAVY;
+	}
+
+	static int    EmbedTics(Actor disc)   { return clamp(inum("rs_ss_embed_tics", 21), 0, 140); }
+	static int    EmbedDamage(Actor disc) { return clamp(inum("rs_ss_embed_dps", 3), 0, 50); }
+	static double GlanceScale(Actor disc) { return clamp(num("rs_ss_glance_scale", 0.4), 0.0, 2.0); }
 }
 
 class RS_ShieldTrail : Actor

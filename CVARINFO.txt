@@ -93,6 +93,37 @@ server bool  rs_ss_bash        = true;
 server float rs_ss_bash_speed  = 70.0;
 server float rs_ss_bash_damage = 1.0;
 
+// ---- what a thrown disc does, by what it hit (CODER_PLAN step 55) --------
+//
+// The disc used to do one thing to everything: roll 24-44 and rip onward, so a zombie and a
+// baron felt identical and the throw had no read to it. Now:
+//
+//   fodder  (SpawnHealth <= _tier_fodder)  BISECT -- comes apart. +NOEXTREMEDEATH is dropped
+//                                          for that hit only and the damage is forced past
+//                                          the gib threshold, so it happens every time
+//                                          rather than on a lucky roll. (Owner, Q43: "a
+//                                          thrown saw blade that leaves a body intact reads
+//                                          wrong.")
+//   mid     (<= _tier_mid)                 EMBED -- the disc buries itself, rides the body
+//                                          and grinds _embed_dps a tic for _embed_tics,
+//                                          then flies home.
+//   heavy   (above that, or +BOSS)         GLANCE -- bounces off at _glance_scale damage. A
+//                                          shield saw does not bury itself in a baron.
+//
+// CLASSIFIED ON SpawnHealth, NEVER ON CLASS NAMES: a modded imp is still fodder and a mod's
+// own boss is still a boss, and a name list would be wrong the first time a monster pack is
+// loaded. SpawnHealth is the AUTHORED health, so a baron on its last hit point is still a
+// baron and does not suddenly bisect.
+//
+// 70 and 600 are the plan's guesses at where Doom's roster divides. Only play can say.
+// _tiers off restores exactly the old single behaviour.
+server bool  rs_ss_tiers        = true;
+server int   rs_ss_tier_fodder  = 70;
+server int   rs_ss_tier_mid     = 600;
+server int   rs_ss_embed_tics   = 21;
+server int   rs_ss_embed_dps    = 3;
+server float rs_ss_glance_scale = 0.4;
+
 // ---- the shoulder mount --------------------------------------------------
 // WHERE ON YOUR BACK the shield sits, and how close your off hand has to get
 // to take it. fwd is negative because the headset sits at your EYES, so your
