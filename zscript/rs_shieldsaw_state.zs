@@ -154,16 +154,39 @@ class RS_ShieldState : EventHandler
 		let sv = arbiter();
 		if (want)
 		{
-			// TAKEN AT PRIO_SYSTEM, NOT PREEMPTABLE (owner, 2026-10-04: "when I want the
-			// shield I want the shield"). The take used to carry no rank, and so did the
-			// weapon mechanism's -- two unranked takes on the same hand, settled by whichever
-			// ran last in the tic, which was the mechanism. The shield lost a contest nobody
-			// had actually decided.
+			// THE SHIELD IS WORN ON THE ARM, SO IT HOLDS THE ARM AND NOT THE FINGERS.
 			//
-			// 100 is the arbiter's PRIO_SYSTEM rung; 0 is preemptable=false. The shield is
-			// physically on the arm by the time this runs, so there is no state in which
-			// something else may have that hand instead.
-			if (sv) sv.GetInt("grip.take", "100 0", 1, GRIPSUBJ_Grip, pmo, ARB_NAME);
+			// History, because the number moved twice and both moves were his:
+			// the take originally carried NO rank, and so did the weapon mechanism's --
+			// two unranked takes on the same hand, settled by whichever ran last in the
+			// tic, which was the mechanism. The shield lost a contest nobody had actually
+			// decided. It went to PRIO_SYSTEM 100 non-preemptable on 2026-10-04 ("when I
+			// want the shield I want the shield").
+			//
+			// 100 WAS AN OVER-CLAIM, and he named the case that shows it (2026-10-11):
+			// "if i was out of ammo in my mainhand gun, i'd want my other hand to be able
+			// to grab a mag from the ammopouch, shiled in hand or not". He is right and the
+			// geometry agrees -- this thing is strapped to the forearm, which is why the
+			// comment below used to say "physically on the arm". A forearm shield does not
+			// close the hand, so claiming the hand outright said something untrue about the
+			// player's body and locked a reload out of a hand that was free.
+			//
+			// 75 AND PREEMPTABLE is exactly the rule he asked for, and it is a rung the
+			// ladder did not have: ABOVE held 70 and inbound 50, so with the shield out you
+			// still cannot grab a crate or reel something in -- the shield wins those, as it
+			// always did -- and BELOW mechanism 80, so the gun's own parts, which is what a
+			// magazine from the pouch is, can take the hand and give it back. Preemptable
+			// matters as much as the number: wouldWin refuses every challenger to a
+			// non-preemptable holder whatever its rank, so at "100 1" nothing could take it
+			// either, there being no rung above 100.
+			//
+			// The shield does NOT stow when it loses the hand. Deployment is mState ==
+			// SS_DRAWN and nothing here reads the claim to decide that; :442 re-takes the
+			// hand every tic, so the shield simply has it back when the reload lets go.
+			// Numbers are inlined rather than named from the arbiter, per that file's own
+			// note: naming its constants would be a compile-time dependency, fatal and
+			// global if RS_WorldHands is absent.
+			if (sv) sv.GetInt("grip.take", "75 1", 1, GRIPSUBJ_Grip, pmo, ARB_NAME);
 			else    pmo.GripClaimOff = GRIPSUBJ_Grip;
 		}
 		else
