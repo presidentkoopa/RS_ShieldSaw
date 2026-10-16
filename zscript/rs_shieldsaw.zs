@@ -91,6 +91,32 @@ class RS_ShieldSaw : Weapon
 	double  NetAngle() { return (multiplayer && netPoseValid) ? netHandAngle : HandAngle(); }
 	double  NetPitch() { return (multiplayer && netPoseValid) ? netHandPitch : HandPitch(); }
 
+	// [SHIELDFACE] THE HAND'S ROLL, WHICH IS THE AXIS A SHIELD ACTUALLY TURNS ON.
+	//
+	// The owner's report: "the shield only deflects when I hold it at 45 degrees -- instead
+	// of holding it flat in front of me like a shield, I have to hold it like I am
+	// mid-swat-away-from-me."
+	//
+	// That is exactly what a face built from yaw and pitch alone does. Those two give the
+	// direction the hand POINTS, like a gun muzzle. A shield's face is perpendicular to the
+	// forearm, and WHICH WAY it faces around that forearm is the roll. Hold the shield flat
+	// and the hand points sideways, so a muzzle-axis "face" points sideways too and nothing
+	// can ever hit it; cock the wrist until the hand happens to point at the monster and it
+	// starts working. No threshold fixes that -- it is a missing degree of freedom, not a
+	// tolerance.
+	//
+	// PlayerInfo.GetVRHand carries Roll beside Yaw and Pitch and has since the per-player
+	// latch landed, so nothing new is needed from the engine. Invalid or no player gives 0,
+	// which reproduces today's behaviour exactly rather than guessing.
+	double HandRoll()
+	{
+		if (!owner || !owner.player) return 0.0;
+		// Five loose returns, not a struct: ok, pos, yaw, pitch, roll.
+		int ok; Vector3 hp; double hy, hpi, hr;
+		[ok, hp, hy, hpi, hr] = owner.player.GetVRHand(HandIndex());
+		return (ok != 0) ? hr : 0.0;
+	}
+
 	// ---- settings, refreshed once a second --------------------------------
 	private int    maxLocks;
 	private double lockCone;
@@ -236,6 +262,8 @@ class RS_ShieldSaw : Weapon
 		if (maxLocks == 0 || GetAge() % 35 == 0) readSettings();
 
 		pruneLocks();
+		publishGuard();
+		reactToBlock();
 		sweepDeflect();
 		sweepBash();
 		applyModel();
@@ -437,10 +465,45 @@ class RS_ShieldSaw : Weapon
 
 		if (isHeld())
 		{
-			// BOTH AXES. HandPitch is already playsim convention (positive down), so this is the
-			// ordinary Doom direction vector and nothing here needs a second opinion about signs.
+			// [SHIELDFACE] THREE AXES, NOT TWO. See HandRoll() above for why: yaw and pitch
+			// give where the hand POINTS, and a shield's face is across the forearm, not
+			// down it.
+			//
+			// The forearm axis is the old two-angle vector -- that part was never wrong, it
+			// was just being used as the face. The face is perpendicular to it, and the roll
+			// says where around it. At roll 0 the face is the hand's "up", which is the
+			// natural way to hold a shield: forearm across the body, face toward the threat.
 			double ang = NetAngle(), pit = NetPitch();
-			guardNormal = (cos(pit) * cos(ang), cos(pit) * sin(ang), -sin(pit));
+			Vector3 fore = (cos(pit) * cos(ang), cos(pit) * sin(ang), -sin(pit));
+
+			// A stable pair perpendicular to the forearm. World up is the reference; if the
+			// forearm IS vertical -- shield held overhead or straight down -- fall back to
+			// the yaw direction so the frame never degenerates mid-swing.
+			// e1 is HORIZONTAL and across the forearm: with the arm held across the body,
+			// that is straight out in front of you, which is how a shield is held. e2
+			// completes the frame and is what roll turns the face toward.
+			//
+			// I had faceAt0 = side cross fore, which is e2 -- so at roll 0 the face pointed
+			// at the CEILING and the shield was a table top. That is why it blocked nothing.
+			Vector3 up = (0, 0, 1);
+			Vector3 e1 = fore cross up;
+			if (e1.Length() < 0.05) e1 = (-sin(ang), cos(ang), 0);
+			e1 = e1.Unit();
+			Vector3 side = (fore cross e1).Unit();
+			Vector3 faceAt0 = e1;
+
+			// Turn the face around the forearm by the hand's roll. rs_ss_face_invert flips
+			// the direction, because which way positive roll turns a hand cannot be read off
+			// a file -- it is a one-look answer in a headset, and a slider beats a guess.
+			double rl = HandRoll();
+			if (cvOn("rs_ss_face_invert", owner.player, false)) rl = -rl;
+			double c = cos(rl), sn = sin(rl);
+			guardNormal = (faceAt0 * c + side * sn).Unit();
+
+			// rs_ss_face_roll off restores the old muzzle-axis face exactly, so the two can
+			// be compared in one session instead of across a rebuild.
+			if (!cvOn("rs_ss_face_roll", owner.player, true)) guardNormal = fore;
+
 			guardCentre = NetPos() + guardNormal * guardStandoff;
 			return true;
 		}
@@ -497,9 +560,170 @@ class RS_ShieldSaw : Weapon
 	// the front, inside the disc. Testing the swept segment rather than where the missile happens to
 	// be sitting is what stops a fast one stepping straight through: a revenant missile covers ten
 	// units in a tic and a plane has no thickness.
+	// [GUARDDIAG] WHY THE SHIELD DID OR DID NOT CATCH THAT. rs_ss_guard_diag.
+	//
+	// Built because the owner should not have to die forty times to find out. Every missile
+	// that comes anywhere near the disc is reported with the ONE reason it was rejected, so
+	// a miss says which test failed instead of looking identical to the shield being off.
+	//
+	// IT HAS TO BE FELT AND SEEN, NOT READ. He is in a headset and cannot look at a console,
+	// so this speaks three ways:
+	//   a HAPTIC TICK the moment a missile is close enough to be considered at all -- that
+	//     alone answers "is the guard even seeing this", which is the question underneath
+	//     every one of these sessions;
+	//   a STRONG PULSE on an actual deflect, so a catch is unmistakable;
+	//   a MIDPRINT naming the failing test, which is readable in VR where a console is not.
+	//
+	// Rate-limited per missile-ish by only speaking on a CHANGE of reason, because a fireball
+	// crossing the room is forty tics of the same message otherwise.
+	private int    diagLastReason;
+	private int    diagLastMs;
+
+	enum EGuardReason
+	{
+		GR_CAUGHT = 0,
+		GR_BEHIND,        // it is behind the face -- the shield is pointing the wrong way
+		GR_SHORT,         // it will not reach the plane this tic
+		GR_WIDE,          // it crosses the plane but outside the disc
+		GR_YOURS,         // your own shot, or one already turned
+		GR_FAR,           // too far away to matter this tic
+	}
+
+	private void guardSay(int reason, Actor mo, double extra)
+	{
+		if (!cvOn("rs_ss_guard_diag", owner ? owner.player : null, false)) return;
+		if (!owner || !owner.player) return;
+
+		// Only on a change, and never more than three times a second.
+		int now = level.maptime;
+		if (reason == diagLastReason && now - diagLastMs < 10) return;
+		diagLastReason = reason; diagLastMs = now;
+
+		String what = "?";
+		if (mo) what = mo.GetClassName();
+		String msg;
+		switch (reason)
+		{
+		case GR_CAUGHT:
+			msg = String.Format("\c[Green]SHIELD CAUGHT %s", what);
+			owner.A_SetBlend("00 FF 00", 0.25, 8);
+			level.VRHaptic(HandIndex(), 1.0, 90);
+			break;
+		case GR_BEHIND:
+			msg = String.Format("\c[Red]%s BEHIND the face (%.2f)  face %.2f %.2f %.2f  roll %.0f",
+				what, extra, guardNormal.x, guardNormal.y, guardNormal.z, HandRoll());
+			level.VRHaptic(HandIndex(), 0.25, 25);
+			break;
+		case GR_WIDE:
+			msg = String.Format("\c[Orange]%s crossed the face but %.0f units OUTSIDE the disc", what, extra);
+			level.VRHaptic(HandIndex(), 0.35, 30);
+			break;
+		case GR_SHORT:
+			msg = String.Format("\c[Yellow]%s is in front but not reaching the face this tic", what);
+			level.VRHaptic(HandIndex(), 0.2, 20);
+			break;
+		case GR_YOURS:
+			msg = String.Format("\c[Grey]%s is yours or already turned", what);
+			break;
+		default:
+			return;
+		}
+		C_MidPrint("SmallFont", msg);
+	}
+
+	// ======================================================================
+	// [GUARDVOLUME] THE HALF THAT CANNOT MISS
+	// ======================================================================
+	//
+	// THE THING THAT WAS ACTUALLY WRONG, after three passes that were not it.
+	//
+	// sweepDeflect below looks for threats once a tic. Two attacks are never there to be
+	// found when it looks, and no geometry fixes either of them:
+	//
+	//   THE POINT-BLANK ROUND. RSB_EnemyBullet is a FastProjectile at Speed 245 -- 245 map
+	//   units per tic, subdividing its own movement so it cannot tunnel. A shotgunner in your
+	//   face is sixty units away. That round is spawned, flown and destroyed inside ONE tic,
+	//   so there is no tic boundary at which any iterator can return it. The owner's report
+	//   named this exactly: "bullets deflect until someone is close range".
+	//
+	//   THE CLAW. A monster's melee swing is not an actor at any moment. There is nothing to
+	//   find at any rate of search. "Monster attacks do not give a shit at all" -- correct,
+	//   and unfixable from here.
+	//
+	// So this half does not search. It PUBLISHES the disc to the engine, and the engine asks
+	// it at the instant a blow resolves, inside the damage call every attack in the game must
+	// pass through. No sampling, so nothing to miss -- a round that lived for a third of a
+	// tic and a claw that never existed both hit the same test.
+	//
+	// EVERY TIC, UNCONDITIONALLY. The engine retires a volume that goes four tics without a
+	// refresh, so stowing the shield, dying or unloading this mod cannot leave an invisible
+	// wall standing. That also means a missed tic costs nothing -- there is no handshake here
+	// to get out of step.
+	private void publishGuard()
+	{
+		if (!owner || !owner.player) return;
+
+		// guardPlane() is the single source of the face for BOTH halves. The sweep and the
+		// registry testing different discs would be a fault nobody could reproduce: the
+		// shield would block in one way and not the other depending on which half caught it.
+		if (!guardPlane())
+		{
+			owner.player.ClearGuardVolume(HandIndex());
+			return;
+		}
+
+		owner.player.SetGuardVolume(HandIndex(), guardCentre, guardNormal, guardRadius);
+	}
+
+	// WHAT THE ENGINE STOPPED FOR US, ANSWERED. The block itself is the engine's -- the blow
+	// is cancelled and the striker staggered before this runs -- so all that is owed here is
+	// the clang, the thump and the spark, which is the half a player actually perceives.
+	//
+	// POLLED, NOT PUSHED. A block happens deep inside another actor's damage resolution, and
+	// running mod code there is how you get a crash that reproduces on nobody's machine. The
+	// tic comes back first and is compared against the last one seen, so a stale record from
+	// thirty seconds ago can never read as this tic's parry.
+	private int lastBlockTic;
+
+	private void reactToBlock()
+	{
+		if (!owner || !owner.player) return;
+
+		int tic, hand;
+		Vector3 pt, nrm;
+		[tic, hand, pt, nrm] = owner.player.GetGuardBlock();
+
+		if (tic < 0 || tic == lastBlockTic) return;
+		lastBlockTic = tic;
+		if (hand != HandIndex()) return;      // the other hand's guard, not this shield
+
+		owner.A_StartSound("rsshield/hit", CHAN_BODY);
+		level.VRHaptic(HandIndex(), 1.0, 90);
+
+		// SAYS SO, because a parry that cancels a blow and a blow that missed look identical
+		// from inside a headset -- and the owner should not have to die to tell them apart.
+		if (cvOn("rs_ss_guard_diag", owner.player, false))
+		{
+			owner.A_SetBlend("00 FF 00", 0.25, 8);
+			C_MidPrint("SmallFont", "\c[Green]SHIELD BLOCKED IT");
+		}
+	}
+
 	private void sweepDeflect()
 	{
-		if (!guardPlane()) return;
+		if (!guardPlane())
+		{
+			// SAYS SO RATHER THAN GOING QUIET. "No guard plane" and "the guard missed" look
+			// identical from inside a headset, and they are completely different faults.
+			if (cvOn("rs_ss_guard_diag", owner ? owner.player : null, false)
+				&& owner && owner.player && (level.maptime % 35) == 0)
+			{
+				C_MidPrint("SmallFont", isHeld()
+					? "\c[Red]SHIELD: no guard plane (deflect off?)"
+					: "\c[Grey]SHIELD: stowed, not guarding");
+			}
+			return;
+		}
 		Vector3 c = guardCentre, n = guardNormal;
 
 		// NOT A BLOCKMAP ITERATOR, AND IT NEVER COULD HAVE BEEN.
@@ -527,29 +751,103 @@ class RS_ShieldSaw : Weapon
 			// travel plus both radii, so nothing fast is culled by a number chosen for
 			// something slow.
 			if (level.Vec3Diff(c, mo.Pos).Length() > guardRadius + mo.radius + mo.Vel.Length())
-				continue;
+				continue;      // too far to matter: deliberately silent, it is most of the map
 			// YOURS PASSES. Once turned, a missile's target IS you -- which is also what stops it
 			// being caught a second time on its way back out.
-			if (mo == owner || mo.target == owner || mo.master == owner) continue;
+			if (mo == owner || mo.target == owner || mo.master == owner)
+			{
+				guardSay(GR_YOURS, mo, 0);
+				continue;
+			}
 			if (mo is "RS_ShieldInFlight") continue;
 
+			// [FASTCATCH] THE SEGMENT IT HAS ALREADY FLOWN, NOT THE ONE IT IS ABOUT TO.
+			//
+			// This looked FORWARD: where is the missile now, and where will it be after one
+			// more tic of Vel. That works for a fireball and fails completely for the thing
+			// the owner was actually shot by.
+			//
+			// RSB_EnemyBullet is a FastProjectile at Speed 245 -- 245 map units in a tic, and
+			// a FastProjectile subdivides its own movement into sub-steps inside one Tick so
+			// it cannot tunnel through a wall. A shotgunner at point blank is sixty units
+			// away. That round spawns and reaches the player inside a single tic, so there is
+			// no tic boundary at which it is in front of the face and "will cross next tic":
+			// by the shield's first look it is already past, which reads as came-from-behind
+			// and is rejected. The shield was not pointing the wrong way; it was looking the
+			// wrong way in TIME.
+			//
+			// Actor.Prev is where this missile was at the end of last tic -- the engine keeps
+			// it for render interpolation. The span Prev -> Pos is the ground it actually
+			// covered, sub-steps included, which is exactly the segment that should be tested
+			// against the plane. A missile that spawned this tic has Prev at its spawn point,
+			// so a point-blank shot is a real segment from the muzzle to the player rather
+			// than a single point already behind the shield.
+			//
+			// The forward look is KEPT as well, because a slow missile that has not reached
+			// the face yet is still caught a tic early the way it always was. Either span
+			// crossing the plane is a catch.
 			Vector3 v = mo.Vel;
 			Vector3 rel = Level.Vec3Diff(c, mo.Pos);      // the missile, relative to the face
+
+			Vector3 relPrev = Level.Vec3Diff(c, mo.Prev);
+			double dPrev = relPrev dot n;                 // where it was last tic
+			double dNow  = rel dot n;                     // where it is now
+
+			// It crossed the plane DURING this tic: in front then, behind or touching now.
+			bool crossedBehind = (dPrev > 0 && dNow <= mo.radius * 0.5
+				&& (relPrev - rel).Length() > 0.0001);
+
 			double d0 = rel dot n;                        // in front of it is positive
 			double d1 = (rel + v) dot n;                  // and where it will be next tic
 
+			if (crossedBehind)
+			{
+				// Use the span it really flew. Everything below reads d0/span/t, so point
+				// those at the travelled segment and the disc test is unchanged.
+				d0 = dPrev;
+				d1 = dNow;
+				rel = relPrev;
+				v = rel * 0 + (Level.Vec3Diff(mo.Prev, mo.Pos));   // Prev -> Pos
+			}
+
 			// FROM THE FRONT, AND IT HAS TO REACH THE PLANE THIS TIC. The missile's own radius is
 			// slack on the far side, so a round stopping just short still counts as arriving.
-			if (d0 <= 0 || d1 > mo.radius * 0.5) continue;
+			// A SHIELD IS A DISC, AND BOTH ITS FACES BLOCK.
+			//
+			// This used to require d0 > 0 -- the round had to arrive from the side the
+			// normal happened to point at. That is the single reason the owner could only
+			// ever block at one wrist angle: with the face turned any other way, every
+			// incoming round was "behind" it and was dropped. It is also just wrong about
+			// what a shield is. Nobody holds a riot shield and asks which way its normal
+			// faces; a thing that crosses the disc stops, from either side.
+			//
+			// So the test is now purely: did the segment this round travelled cross the
+			// plane of the disc, in either direction? The sign of d0 no longer gates
+			// anything -- only the CHANGE of sign does, which is what crossing means.
 			double span = d0 - d1;
-			if (span <= 0.0001) continue;
+			if (span * span <= 0.00000001) continue;        // parallel to the plane
+			if ((d0 > 0) == (d1 > 0))
+			{
+				// Never reached the plane during this span, from either side.
+				guardSay(GR_SHORT, mo, d1);
+				continue;
+			}
 
 			double t = clamp(d0 / span, 0.0, 1.0);
 			Vector3 hit = rel + v * t;
 			Vector3 radial = hit - n * (hit dot n);
-			if (radial.Length() > guardRadius + mo.radius) continue;
+			if (radial.Length() > guardRadius + mo.radius)
+			{
+				guardSay(GR_WIDE, mo, radial.Length() - (guardRadius + mo.radius));
+				continue;
+			}
 
-			deflect(mo, n);
+			guardSay(GR_CAUGHT, mo, 0);
+
+			// OUT THE SIDE IT CAME IN. With both faces blocking, a fixed normal would send
+			// half of everything straight through the shield. Flip it to face the arrival.
+			Vector3 nOut = (d0 > 0) ? n : -n;
+			deflect(mo, nOut);
 		}
 	}
 

@@ -330,3 +330,17 @@ server float rs_ss_fall = 0.11;
 // so a sidearm throw carries and one made with the disc on edge drops. Capped
 // below rs_ss_fall, so lift can flatten a descent and never become a climb.
 server float rs_ss_lift = 0.09;
+
+// [SHIELDFACE] The shield face follows the hand ROLL, so holding it flat in front of you
+// guards -- not only when the wrist is cocked as if mid-swat. Off restores the old
+// yaw+pitch-only face, for comparing the two in one session.
+user bool rs_ss_face_roll = true;
+
+// Which way positive roll turns the face. Cannot be read off a file; flip it if the shield
+// guards behind you instead of in front.
+user bool rs_ss_face_invert = false;
+
+// [GUARDDIAG] Say why the shield did or did not catch something: a haptic tick when a round
+// is close enough to be considered, a strong pulse and a green flash on a catch, and a
+// midprint naming the test that rejected it. For finding a fault in one pass instead of forty.
+user bool rs_ss_guard_diag = true;
