@@ -136,6 +136,9 @@ OptionMenu "RS_ShieldSaw_Options"
 	StaticText "Measured along the face, so swinging it sideways or", 2
 	StaticText "dropping your arm is not a bash however fast it is.", 2
 	Option "Shield bash",            "rs_ss_bash", "OnOff"
+	Option "Shield charge",          "rs_ss_charge", "OnOff"
+	Option "Blocking charges the saw", "rs_ss_block_charge", "OnOff"
+	Option "Blows leave marks", "rs_ss_dents", "OnOff"
 	Slider "  How hard a shove (units/sec)", "rs_ss_bash_speed",  10, 400, 5, 0
 	Slider "  Damage",                       "rs_ss_bash_damage", 0.1, 8.0, 0.1, 1
 	StaticText "Bashing by accident? Raise the shove. A real shove", 2
@@ -155,6 +158,10 @@ OptionMenu "RS_ShieldSaw_Options"
 
 	StaticText ""
 	Option "Gesture debug to console", "rs_ss_debug", "OnOff"
+	Option "Show the blocking disc", "rs_ss_guard_draw", "OnOff"
+	Option "Disc from the model", "rs_ss_guard_mesh", "OnOff"
+	Option "Disc from the tracked hand", "rs_ss_guard_latch", "OnOff"
+	Option "Left handed", "rs_ss_lefthanded", "OnOff"
 
 	StaticText ""
 	SafeCommand "Reset all", "resetcvar rs_ss_mount_mode rs_ss_stow rs_ss_stow_place rs_ss_stow_ofs_x rs_ss_stow_ofs_y rs_ss_stow_ofs_z rs_ss_stow_yaw rs_ss_stow_pitch rs_ss_stow_roll rs_ss_stow_scale rs_ss_held_ofs_x rs_ss_held_ofs_y rs_ss_held_ofs_z rs_ss_held_yaw rs_ss_held_pitch rs_ss_held_roll rs_ss_held_scale rs_ss_locks rs_ss_lock_cone rs_ss_lock_range rs_ss_throw_speed rs_ss_cut_damage rs_ss_throw_min rs_ss_deflect rs_ss_deflect_stowed rs_ss_handmodel rs_ss_start rs_ss_equip rs_ss_gesture rs_ss_bash rs_ss_bash_speed rs_ss_bash_damage"

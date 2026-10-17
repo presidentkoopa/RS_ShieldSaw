@@ -1,0 +1,37 @@
+# RS_ShieldSaw -- the mark a blocked blow leaves on the plate.
+#
+# A ONE-UNIT QUAD AND NOTHING ELSE. Two triangles, four vertices, one UV square. It is
+# authored as OBJ rather than MD3 because this engine loads both and OBJ is text: a quad this
+# small written as binary MD3 is a file nobody can check by reading it, and the one property
+# that matters here -- which way it faces -- would be invisible.
+#
+# AXES. The quad lies in the X/Y plane with its normal along +Z in OBJ space. The shield's
+# front plate faces mesh -Y, so the MODELDEF block that uses this rotates it onto the plate;
+# keeping the mesh itself axis-aligned means the rotation is stated in one place and can be
+# read, instead of being baked into vertex numbers.
+#
+# SIZE. One unit across, centred on the origin, so the MODELDEF Scale IS the dent's diameter
+# in mesh units and a caller choosing a size is choosing a number with a meaning.
+
+# no mtllib: this engine takes the skin from MODELDEF, and the OBJ loader has no mtllib
+# handling at all -- naming a material file that does not exist is a warning waiting to happen.
+o dent
+
+v -0.5 -0.5 0.0
+v  0.5 -0.5 0.0
+v  0.5  0.5 0.0
+v -0.5  0.5 0.0
+
+vt 0.0 0.0
+vt 1.0 0.0
+vt 1.0 1.0
+vt 0.0 1.0
+
+vn 0.0 0.0 1.0
+
+# The material name must RESOLVE: the loader calls LoadSkin on it, first by bare name and
+# then relative to this file, so it has to be the texture sitting next to this model. A made-up
+# group name fails the model load outright ("Material dentskin (#0) not found").
+usemtl dent_scorch
+f 1/1/1 2/2/1 3/3/1
+f 1/1/1 3/3/1 4/4/1

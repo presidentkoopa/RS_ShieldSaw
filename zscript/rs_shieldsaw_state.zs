@@ -341,7 +341,66 @@ class RS_ShieldState : EventHandler
 		mState[pnum] = SS_FLYING;
 		let p = players[pnum];
 		if (p && p.mo) { p.mo.A_StopSound(CHAN_OFFWEAPON); claimOffHand(p.mo, false); }
-		restorePrevious(pnum);
+
+		// [EMPTYHAND] THE HAND STAYS EMPTY WHILE THE DISC IS AWAY -- the owner's ruling,
+		// 2026-10-17.
+		//
+		// This used to hand your previous weapon straight back on the release edge, which
+		// made a catch impossible by construction: the disc flew to a hand that was already
+		// holding a shotgun, so the only thing it could do on arrival was vanish and
+		// reappear on your back. Recall and yank-back have the same problem. An empty hand
+		// is the thing all three need, and it is also what a thrown shield FEELS like --
+		// you are committed until it comes home.
+		//
+		// The weapon comes back when the disc does, in Landed() and Caught() below, or when
+		// the flight gives up. The switch exists so the old behaviour can be compared in one
+		// session rather than across a rebuild.
+		if (!cvOn("rs_ss_hand_empty", p, true))
+			restorePrevious(pnum);
+	}
+
+	// [CATCH] THE GRIP EDGE, REMEMBERED FOR A FEW TICS.
+	//
+	// A catch cannot be "is the grip down the instant the disc arrives": the disc crosses the
+	// catch radius in one or two tics at 22 units a tic, and a hand closes over about four.
+	// Asking for the two to coincide exactly would make catching feel broken when the player
+	// did everything right. So the press opens a short window and the arrival looks back at
+	// it -- the same shape the draw gesture already uses for the same reason.
+	private int mGripDownTic[MAXPLAYERS];
+
+	static bool CatchWindow(int pnum, int tics = 4)
+	{
+		if (pnum < 0 || pnum >= MAXPLAYERS) return false;
+		let h = RS_ShieldState.Get();
+		if (!h) return false;
+		int t = h.mGripDownTic[pnum];
+		return t > 0 && (level.maptime - t) >= 0 && (level.maptime - t) <= tics;
+	}
+
+	// IN THE HAND, NOT ON THE BACK. The disc arrived while the hand was closing, so it goes
+	// back where it came from and the flight ends in a catch rather than in a stow.
+	void Caught(int pnum)
+	{
+		if (pnum < 0 || pnum >= MAXPLAYERS) return;
+		let p = players[pnum];
+		if (!p || !p.mo) { Landed(pnum); return; }
+		let saw = RS_ShieldSaw(p.mo.FindInventory("RS_ShieldSaw"));
+		if (!saw) { Landed(pnum); return; }
+
+		saw.bOffhandWeapon = true;
+		p.PendingWeapon = saw;
+		p.mo.BringUpWeapon();
+
+		mState[pnum] = SS_DRAWN;
+		claimOffHand(p.mo, true);
+
+		// THE THUNK. Its own sound, because a catch that plays rsshield/hit -- the block, the
+		// bash, the grind puff, the fodder bisect and the landing all share it -- is a catch
+		// the player cannot hear happening. SNDINFO maps it to the raise sound until a real
+		// one is authored, so it is at worst distinct rather than wrong.
+		p.mo.A_StartSound("rsshield/catch", CHAN_OFFWEAPON);
+		buzz(pnum, 1.0, 70.0);
+		mGripDownTic[pnum] = 0;
 	}
 
 	// The launch failed -- the spawn point was inside geometry, or something
@@ -362,6 +421,9 @@ class RS_ShieldState : EventHandler
 		let p = players[pnum];
 		if (p && p.mo) p.mo.A_StartSound("rsshield/hit", CHAN_BODY);
 		buzz(pnum, 0.6, 40.0);
+		// [EMPTYHAND] the disc is home, so the hand gets its weapon back. Thrown() no longer
+		// does this on the release edge; see the note there.
+		restorePrevious(pnum);
 	}
 
 	private void restorePrevious(int pnum)
@@ -618,6 +680,8 @@ class RS_ShieldState : EventHandler
 
 		mAtShoulder = AtMount(pmo, p);
 
+		if (grip && !was) mGripDownTic[consoleplayer] = level.maptime;   // [CATCH] see CatchWindow
+
 		if (grip && !was)                       // pressed
 		{
 			// REACHING FOR IT is the draw, and the press OPENS A WINDOW rather than being spent on
@@ -727,6 +791,18 @@ class RS_ShieldState : EventHandler
 		              spinT / 1000.0, rollT / 1000.0);
 	}
 
+	// The pull, when the disc is buried in something. Separate from RecallNow because a yank
+	// that quietly becomes a recall when there is nothing to yank would hide which happened.
+	private void YankNow(int pnum)
+	{
+		let p = players[pnum];
+		if (!p || !p.mo) return;
+		let saw = RS_ShieldSaw(p.mo.FindInventory("RS_ShieldSaw"));
+		if (!saw) return;
+		let f = RS_ShieldInFlight(saw.flying);
+		if (f) f.Yank();
+	}
+
 	private void RecallNow(int pnum)
 	{
 		let p = players[pnum];
@@ -778,6 +854,34 @@ class RS_ShieldState : EventHandler
 		}
 		else if (e.Name ~== "rs-ss-stow")   Stow(e.Player);
 		else if (e.Name ~== "rs-ss-recall") RecallNow(e.Player);
+		else if (e.Name ~== "rs-ss-yank")   YankNow(e.Player);
+
+		// [RSG_PULL] PULLING YOUR HAND BACK IS THE RECALL, AND THE YANK.
+		//
+		// RS_Gestures announces a hand moving fast BACK along its own axis (rsg_pull, added
+		// 2026-10-17 -- only the forward shove had an event before). It is the natural input
+		// for both of the things that bring the disc home, and it needs nothing on the
+		// shoulder, which the old recall did: reaching behind yourself mid-fight to call a
+		// shield back is not a thing anyone does twice.
+		//
+		// WHICH ONE IT IS depends on the disc, not on a second gesture: buried in something,
+		// a pull is a yank; still flying, a pull is a recall. The player makes one motion and
+		// the game knows what it can do.
+		//
+		// The event is local hardware on the sender, so this reacts for the player it came
+		// from and from nobody else's reading.
+		else if (e.Name ~== "rsg_pull")
+		{
+			if (e.Args[0] != 1) return;                      // the off hand only
+			if (StateOf(e.Player) != SS_FLYING) return;
+			let p = players[e.Player];
+			if (!p || !p.mo) return;
+			let saw = RS_ShieldSaw(p.mo.FindInventory("RS_ShieldSaw"));
+			if (!saw) return;
+			let f = RS_ShieldInFlight(saw.flying);
+			if (!f) return;
+			if (!f.Yank()) f.GoHome();
+		}
 		else if (e.Name ~== "rs-ss-throwkey")
 		{
 			// THE DESKTOP PLAYER'S THROW. The toggle key's drawn branch stows, and the gesture's throw is

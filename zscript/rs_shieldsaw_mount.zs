@@ -40,9 +40,27 @@ class RS_ShieldMount
 	//
 	// Anchors hang off HmdPos and the BODY yaw, never head pitch or roll --
 	// otherwise looking down would drag the shield down your back with you.
+	// [LEFTHAND] WHICH SHOULDER. The mount was hard-wired to the LEFT: `side = -8` at every
+	// call site, with no handedness term anywhere in the file. A left-handed player therefore
+	// reached across his own chest for a shield that was drawn in his right hand.
+	//
+	// Folded in here, at the one place that turns a side offset into a world position, rather
+	// than at the five call sites that pass -8 -- which is how it would come back wrong the
+	// first time someone added a sixth.
+	//
+	// A `user` cvar because vr_control_scheme is CVAR_GLOBALCONFIG and the playsim cannot read
+	// it for anybody, including the local player.
+	static double MirrorSide(PlayerPawn pmo, double side)
+	{
+		if (!pmo || !pmo.player) return side;
+		let c = CVar.GetCVar("rs_ss_lefthanded", pmo.player);
+		return (c && c.GetBool()) ? -side : side;
+	}
+
 	static Vector3 AnchorPos(PlayerPawn pmo, double fwd, double side, double frac)
 	{
 		if (!pmo) return (0, 0, 0);
+		side = MirrorSide(pmo, side);
 
 		double yaw = pmo.angle;
 		double fx = cos(yaw), fy = sin(yaw);
@@ -65,6 +83,52 @@ class RS_ShieldMount
 	static bool Tracking(PlayerPawn pmo)
 	{
 		return pmo && pmo.HmdPos.Length() != 0;
+	}
+
+	//=======================================================================
+	//
+	// THE SAME SEAT, OFF THE PAWN INSTEAD OF THE HEAD -- for anything that
+	// DECIDES something rather than draws something.
+	//
+	// AnchorPos above is right for drawing: it rides the real head, so the
+	// stowed shield stays on the shoulder it looks like it is on. It is wrong
+	// for a collision test, twice over.
+	//
+	//   IT IS NOT REPLICATED. HmdPos is written by the renderer, on one
+	//   machine. A guard volume placed from it is a volume every other
+	//   machine disagrees with, and a damage test two machines disagree about
+	//   is a desync.
+	//
+	//   IT IS ZERO WHEN NOTHING IS TRACKING. Flat play, a boot test, the
+	//   first tics before the backend writes a pose -- the anchor collapses
+	//   toward the map origin and the guard is registered thousands of units
+	//   away from the player. MEASURED, 2026-10-17: a blow logged
+	//   `discaxis 3762.6` with the disc at (-8, -7, -14) while the player
+	//   stood at (1056, -3616). The comment above predicted exactly this; the
+	//   guard path called AnchorPos anyway, without asking Tracking().
+	//
+	// So the deciding seat uses the pawn's own position, its own body yaw and
+	// its view height -- all replicated, all live on every machine, none of
+	// them zero before the headset wakes up.
+	//
+	static Vector3 AnchorPosPlaysim(PlayerPawn pmo, double fwd, double side, double frac)
+	{
+		if (!pmo) return (0, 0, 0);
+		side = MirrorSide(pmo, side);
+
+		double yaw = pmo.angle;
+		double fx = cos(yaw), fy = sin(yaw);
+		double rx = cos(yaw - 90), ry = sin(yaw - 90);
+
+		// The pawn's eye, not the headset's: ViewHeight is where the engine
+		// itself thinks this player's eyes are, and it is the same number on
+		// every machine. Crouching moves it, which is the behaviour the drawn
+		// anchor gets from the live head.
+		double eye = max(24.0, pmo.ViewHeight);
+
+		return (pmo.pos.x + (fwd * fx) + (side * rx),
+		        pmo.pos.y + (fwd * fy) + (side * ry),
+		        pmo.pos.z + (eye * frac));
 	}
 }
 

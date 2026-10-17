@@ -66,6 +66,18 @@ class RS_ShieldSawPropOff : RS_ShieldSawProp {}
 // floating where you last held one.
 class RS_ShieldSawWorld : EventHandler
 {
+	// [DENT] THE DRAWN SHIELD, for anything that has to ride it. The props live here because
+	// this handler owns their lifetime; a mark seated on a prop this handler later destroys
+	// would be seated on nothing, so the one place that knows whether a prop exists is the
+	// one place that answers this.
+	static Actor PropFor(int hand)
+	{
+		let h = RS_ShieldSawWorld(EventHandler.Find("RS_ShieldSawWorld"));
+		if (!h) return null;
+		if (hand < 0 || hand > 1) return null;
+		return h.prop[hand];
+	}
+
 	private Actor prop[2];
 	private bool  warned;
 
@@ -87,6 +99,62 @@ class RS_ShieldSawWorld : EventHandler
 			{
 				if (prop[h]) { prop[h].Destroy(); prop[h] = null; }
 				continue;
+			}
+
+			// [LEFTHAND] THE MESH WAS AUTHORED FOR THE LEFT HAND, and NOAUTOREVERSE stops the
+			// engine mirroring it -- so held in the right hand its front plate faces the
+			// player's own body and he is looking at the back of his own shield. Turning it
+			// half a circle about the hand's up axis puts the face outward again; the disc is
+			// symmetric enough that a rotation reads as the mirror it stands in for.
+			//
+			// Set every tic rather than once at spawn: FollowHandRot is also the recoil
+			// service's channel, so a value written once would be overwritten the first time
+			// anything kicked and the shield would silently turn back round.
+			// [HEAT] THE PLATE GLOWS, AND THE ROOM KNOWS ABOUT IT.
+			//
+			// No sprite, no skin swap, no new art: Actor.TintColor multiplies the colour the
+			// MODEL is drawn in and keeps its texture, so the steel grain and the teeth stay
+			// visible through the glow instead of being hidden behind a billboard stuck to
+			// your arm. With +BRIGHT it stops being tinted and starts emitting.
+			//
+			// THE RAMP IS THE ONE STEEL ACTUALLY DOES: dull red, then orange, then nearly
+			// white. It runs upward in brightness as well as colour, which is why BRIGHT goes
+			// on as soon as there is any heat at all -- a dark red MULTIPLY with no fullbright
+			// would make a hot shield look like a shadowed one.
+			//
+			// AND IT THROWS LIGHT. A glow that does not light your hand, the wall beside you
+			// or the thing you are about to hit reads as a decal. SpawnEffectLight is cheap
+			// and dies on its own, so it is re-fed rather than tracked.
+			if (prop[h])
+			{
+				let saw = RS_ShieldSaw(w);
+				double heat = saw ? saw.heatLevel : 0.0;
+				if (heat > 0.02)
+				{
+					double t = clamp(heat, 0.0, 1.0);
+					int cr = 255;
+					int cg = int(clamp(20 + 235 * (t - 0.25) / 0.75, 20, 255));
+					int cb = int(clamp(10 + 245 * (t - 0.60) / 0.40, 10, 255));
+					prop[h].TintColor = Color(255, cr, cg, cb);
+					prop[h].bBRIGHT = true;
+
+					// Every third tic: the light's own life covers the gap, and feeding one
+					// every tic is three times the lights for no visible difference.
+					if ((level.maptime % 3) == 0)
+						level.SpawnEffectLight(prop[h].pos, Color(255, cr, cg, cb),
+							24.0 + 64.0 * t, 0.35 + 0.65 * t, 0.12);
+				}
+				else
+				{
+					prop[h].TintColor = 0;
+					prop[h].bBRIGHT = false;
+				}
+
+				let lc = CVar.GetCVar("rs_ss_lefthanded", p);
+				bool lefty = lc && lc.GetBool();
+				Vector3 fr = prop[h].FollowHandRot;
+				fr.z = lefty ? 180.0 : 0.0;
+				prop[h].FollowHandRot = fr;
 			}
 
 			if (!prop[h])

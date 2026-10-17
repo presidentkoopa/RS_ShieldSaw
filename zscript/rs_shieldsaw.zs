@@ -132,6 +132,37 @@ class RS_ShieldSaw : Weapon
 	// (RS_WorldHands/zscript/hands/rs_grab.zs:19 documents the same trap). Do not collapse these back.
 	private Vector3 guardCentre;
 	private Vector3 guardNormal;
+	// [DENT] THE PLATE'S OWN AXES, as seatFromLatch last built them. Kept because a block
+	// arrives as a WORLD point and a mark has to be placed in MESH coordinates, and the only
+	// thing that can convert between the two is the basis the seat was composed from. Zero
+	// until the latch seat has run once, which is also exactly when dents are meaningful.
+	private Vector3 dentAxisR, dentAxisU, dentAxisF;
+	private bool    dentBasisOk;
+	private Array<RS_ShieldDent> dents;
+	private int     dentNext;
+	// [GUARDSEAT] the rim actually published. The measured mesh rim when the seat came from
+	// the latch, the rs_ss_guard_radius slider on every older path, so one field is always
+	// the answer and the two can never disagree about which disc was registered.
+	private double  guardRim;
+	// [GRINDREV] HOW SPUN UP THE SAW IS, 0 to 1. Raised by each grind tic and bled off every
+	// tic in Tick, so it is a property of how long the trigger has been held rather than of
+	// whichever animation frame happens to be up. See A_ShieldGrind for why the two rates are
+	// a matched pair.
+	double          revLevel;
+	// [HEAT] HOW HOT THE PLATE IS, 0 to 1. Fed by what it blocks and by grinding, bled off
+	// every tic. Read by RS_ShieldSawWorld, which is what actually draws the thing.
+	//
+	// NOT THE SAME NUMBER AS THE REV, deliberately. The rev is how fast the blade is turning
+	// and it spins down in under a second; heat is how much energy the steel has taken and it
+	// should still be glowing well after you stop. Folding them together would mean a shield
+	// that cools the instant you let go of the trigger.
+	double          heatLevel;
+	// [CHARGE] tics of dash left, and the direction it committed to. Kept as state so the
+	// dash cannot be re-aimed every tic by turning -- a charge you can steer is a strafe.
+	private int     chargeTics;
+	private Vector3 chargeDir;
+	// [COUNTER] maptime up to which a bash counts as a counter-hit. See reactToBlock.
+	private int     counterUntil;
 	private bool   deflectAim;
 
 	// [BASH] CODER_PLAN step 54 -- shove the shield forward into something and it hits.
@@ -261,10 +292,32 @@ class RS_ShieldSaw : Weapon
 		// zero grind damage.
 		if (maxLocks == 0 || GetAge() % 35 == 0) readSettings();
 
+		// [GRINDREV] see A_ShieldGrind for why this rate and that one are a matched pair.
+		if (revLevel > 0) revLevel = max(0.0, revLevel - 0.035);
+
+		// [HEAT] COOLS IN ABOUT EIGHT SECONDS from white hot, which is slow enough that the
+		// glow is still on you while you fight and fast enough that it means something. Steel
+		// does not shed heat in a second and neither does this.
+		if (heatLevel > 0) heatLevel = max(0.0, heatLevel - 0.0036);
+
+		// [CHARGE] the dash itself. Velocity, not SetOrigin: a charge has to be stopped by
+		// the same walls and the same monsters everything else is, and a teleport would put
+		// the player inside geometry the first time he charged a doorway.
+		if (chargeTics > 0 && owner)
+		{
+			chargeTics--;
+			let cpmo = PlayerPawn(owner);
+			if (cpmo && cpmo.health > 0)
+			{
+				cpmo.Vel.x = chargeDir.x * 14.0;
+				cpmo.Vel.y = chargeDir.y * 14.0;
+			}
+			else chargeTics = 0;
+		}
+
 		pruneLocks();
 		publishGuard();
 		reactToBlock();
-		sweepDeflect();
 		sweepBash();
 		applyModel();
 	}
@@ -310,15 +363,58 @@ class RS_ShieldSaw : Weapon
 		// THE HAND THE SHIELD IS ACTUALLY IN. HandIndex() already answers this for sound
 		// channels; the velocity fields are the other pair that must agree with it, or a
 		// shield in the main hand is tested against the off hand's motion.
+		// [BASHPEAK] THE PEAK OF THE SHOVE, NOT WHATEVER THE LAST FRAME HAPPENED TO READ.
+		//
+		// This read OffhandVel: one instantaneous sample, taken once a tic. A shove peaks for
+		// three or four tics and is already slowing by the time the shield reaches the thing,
+		// so the bash was judged on a number smaller than the one the player produced -- the
+		// same fault the throw gate had, and it was fixed there by reading the engine's
+		// quarter-second peak ring instead. One source for both now.
+		//
+		// MINUS THE PAWN'S OWN MOTION, so walking at a monster is not a bash. The reading is
+		// room-relative and roomscale travel is pushed into the pawn as locomotion, so without
+		// this a player could bash by strafing into things with the shield held still.
+		//
+		// Per second on both paths: bashSpeed is 70 u/s and so is this.
 		Vector3 hv = (HandIndex() == 1) ? pmo.OffhandVel : pmo.AttackVel;
+		double ageMs = level.HandPeakAgeMs(HandIndex());
+		if (ageMs >= 0 && ageMs <= 200)
+		{
+			Vector3 pk = level.HandVelAtPoint(HandIndex(), (0, 0, 0), RS_HAND_PEAK);
+			if (pk.Length() > hv.Length()) hv = pk;
+		}
+		hv -= pmo.Vel * 35.0;
 
 		// ALONG THE FACE, NOT JUST FAST. Swinging the shield sideways, or dropping your arm,
 		// is not a bash however quick it is -- only motion INTO what the face is pointing at.
 		double drive = hv dot guardNormal;
 		if (drive < bashSpeed) return;
 
+		// [CHARGE] SHOULDER INTO IT. A shove made while the plate faces the way the body is
+		// going, with the legs already moving, is a charge rather than a swat: the shield is
+		// not being swung at something, the player is going through it.
+		//
+		// The plate stays live for the whole dash, so a frontal attack during a charge is
+		// blocked by the thing being charged with -- which is the point of charging behind a
+		// shield and needs no code of its own, only the guard not being switched off.
+		if (cvOn("rs_ss_charge", owner.player, true) && chargeTics <= 0)
+		{
+			Vector3 look = (cos(owner.angle), sin(owner.angle), 0);
+			double facing = guardNormal dot look;
+			double running = pmo.Vel.xy.Length();
+			if (facing > 0.8 && running > 2.0)
+			{
+				// Twelve tics is about a third of a second: far enough to close a gap, short
+				// enough that it reads as a lunge rather than as the player losing control of
+				// his own legs. Nothing in VR moves the camera that the player did not move.
+				chargeTics = 12;
+				chargeDir  = look;
+				owner.A_StartSound("rsshield/raise", CHAN_BODY);
+			}
+		}
+
 		Vector3 c = guardCentre, n = guardNormal;
-		double reach = guardRadius + 4.0;
+		double reach = guardRim + 4.0;
 
 		// Monsters ARE in the blockmap, unlike missiles -- which is why this can be an
 		// iterator and sweepDeflect could not.
@@ -339,12 +435,19 @@ class RS_ShieldSaw : Weapon
 			double  d   = rel dot n;
 			if (d <= 0 || d > reach + mo.radius) continue;         // in front, and close
 			Vector3 radial = rel - n * d;
-			if (radial.Length() > guardRadius + mo.radius) continue;   // inside the disc
+			if (radial.Length() > guardRim + mo.radius) continue;   // inside the disc
 
 			if (bashedRecently(mo)) continue;
 
 			// clamp(10 + 0.15 * speed, 10, 40), as the step sets it, times the slider.
-			int dmg = int(clamp(10.0 + 0.15 * drive, 10.0, 40.0) * bashScale);
+			double bdmg = clamp(10.0 + 0.15 * drive, 10.0, 40.0) * bashScale;
+
+			// [COUNTER] DOUBLE INTO SOMETHING YOU JUST BLOCKED. The window opened on the
+			// block (reactToBlock) rather than on how precisely it was timed, so the shape of
+			// the exchange is: take the hit on the plate, then put the plate through him.
+			if (counterUntil > 0 && level.maptime <= counterUntil) bdmg *= 2.0;
+
+			int dmg = int(bdmg);
 			mo.DamageMobj(owner, owner, dmg, 'Melee');
 
 			// Off the face, not away from the player: you shove where you are pointing.
@@ -455,16 +558,153 @@ class RS_ShieldSaw : Weapon
 	// worse than what it replaces and no better. Networking the hand pose is the real answer and is
 	// an engine question, not this file's.
 
+	// ---- [GUARDSEAT] the measured plate, on the replicated latch ----------------------
+	//
+	// MESH UNITS x 0.34 (MODELDEF Scale), with AngleOffset -90 folded in, so a mesh point
+	// lands in the hand's frame as 0.34 * (my, mz, -mx). Measured with tools/md3measure.py;
+	// the outline is round to within 1% across every 30-degree sector, so a circle IS the
+	// mesh's rim and no polygon is needed.
+	const SS_PLATE_RIGHT = -4.23;   // 0.34 * -12.45, the front plate's centre (mesh y)
+	const SS_PLATE_BACK  =  3.19;   // 0.34 *   9.39, toward the elbow (mesh -x)
+	const SS_RIM         =  9.90;   // 0.34 *  29.13
+	const SS_RIM_BLADES  = 12.04;   // 0.34 *  35.41, shieldsaw.md3 frames 5-7
+
+	// WHICH HAND THE MESH WAS AUTHORED FOR. It was modelled for the LEFT hand, and
+	// NOAUTOREVERSE stops the engine mirroring it, so when a left-handed player holds it in
+	// the right hand the front plate faces his own body. The guard's lateral offset has to
+	// flip with the mesh or the disc ends up on the wrong side of the hand.
+	//
+	// A `user` cvar rather than vr_control_scheme: that one is CVAR_GLOBALCONFIG, so the
+	// playsim cannot see it for anyone. This is the half a single player can actually use.
+	private double MirrorSign()
+	{
+		return cvOn("rs_ss_lefthanded", owner ? owner.player : null, false) ? -1.0 : 1.0;
+	}
+
+	// Returns false if the latch has nothing for this hand, so the caller falls back to the
+	// render pose rather than registering a disc at the world origin.
+	private bool seatFromLatch()
+	{
+		int ok; Vector3 hp; double hy, hpi, hr;
+		[ok, hp, hy, hpi, hr] = owner.player.GetVRHand(HandIndex());
+		if (ok == 0) return false;
+
+		// The forearm. Straight off the latch: absolute yaw, absolute pitch.
+		Vector3 f = (cos(hpi) * cos(hy), cos(hpi) * sin(hy), -sin(hpi));
+		if (f.Length() < 0.0001) return false;
+		f = f.Unit();
+
+		// A stable pair across the forearm. World up is the reference; if the forearm IS
+		// vertical -- shield overhead or straight down -- fall back to the yaw direction so
+		// the frame never degenerates mid-swing.
+		Vector3 e1 = f cross (0, 0, 1);
+		if (e1.Length() < 0.05) e1 = (sin(hy), -cos(hy), 0);
+		e1 = e1.Unit();
+		Vector3 side = (f cross e1).Unit();
+
+		double rl = hr;
+		if (cvOn("rs_ss_face_invert", owner.player, false)) rl = -rl;
+		Vector3 right = (e1 * cos(rl) + side * sin(rl)).Unit();
+
+		double ps = level.pixelstretch > 0.1 ? level.pixelstretch : 1.2;
+		double m = MirrorSign();
+
+		// [GUARDPLATE] THE SEAT FROM THE MODEL, when the model declares one.
+		//
+		// The constants below were measured off this mesh and agree with the drawn plate to
+		// within 0.01 units -- but they are still a second copy of a number that belongs to
+		// the model, and a second copy drifts the first time anyone rescales the mesh or
+		// retunes the MODELDEF. The engine composes the declared plate with the model's own
+		// Scale and AngleOffset and hands it back in the hand's frame, so there is one source
+		// and this code cannot disagree with what is drawn.
+		//
+		// The constants stay as the fallback: a load order without the plate declared, or an
+		// older engine, then behaves exactly as the verified version did rather than failing.
+		double plateRight = SS_PLATE_RIGHT, plateBack = SS_PLATE_BACK;
+		double meshRim = 0.0;
+		{
+			bool okPlate; Vector3 pc, pn; double prad, phalf;
+			[okPlate, pc, pn, prad, phalf] = level.GetGuardPlate("RS_ShieldSawPropOff", 0, 0);
+			if (okPlate && prad > 0)
+			{
+				// pc is (right, up, back) in the hand's frame; the plate's own up component is
+				// zero on this mesh and is ignored rather than silently dropped elsewhere.
+				plateRight = pc.x;
+				plateBack  = pc.z;
+				meshRim    = prad;
+			}
+		}
+
+		// The hand basis is orthonormal in PIXEL-STRETCHED space, which is where the model is
+		// composed, so the offset is taken there and brought back by dividing the vertical
+		// part out. A plane n.q = d in stretched space is (n.x, n.y, n.z*ps) in map space.
+		// [DENT] remember the axes this seat was built from, before they go out of scope.
+		dentAxisR = right; dentAxisU = (right cross f).Unit(); dentAxisF = f;
+		dentBasisOk = true;
+
+		Vector3 off = right * (plateRight * m) - f * plateBack;
+		guardCentre = hp + (off.x, off.y, off.z / ps);
+
+		Vector3 nS = right * m;
+		guardNormal = ((nS.x, nS.y, nS.z * ps)).Unit();
+
+		// The blades change the rim, and the frame says whether they are out.
+		// MODELDEF FrameIndex SSNH E..H maps to shieldsaw.md3 frames 4..7.
+		// The rim: the model's if it declared one, the measured constant otherwise. The
+		// blades-out frames cannot be declared per frame -- every FrameIndex in a MODELDEF
+		// block shares its parameters -- so that one is derived from the authored rim by the
+		// ratio the mesh itself measures, 35.41 to 29.13.
+		guardRim = (meshRim > 0) ? meshRim : SS_RIM;
+		let psp = owner.player.FindPSprite(HandIndex() == 1 ? PSP_OFFHANDWEAPON : PSP_WEAPON);
+		if (psp && psp.CurState && psp.CurState.frame >= 4)
+			guardRim = (meshRim > 0) ? (meshRim * (35.41 / 29.13)) : SS_RIM_BLADES;
+		if (!cvOn("rs_ss_guard_mesh", owner.player, true)) guardRim = guardRadius;
+		return true;
+	}
+
 	// The shield's face: where its centre is, and which way it looks.
 	private bool guardPlane()
 	{
 		guardCentre = (0, 0, 0);
 		guardNormal = (1, 0, 0);
+		guardRim    = guardRadius;   // the measured seat overrides this; nothing else does
 		if (!owner || !owner.player || flying || !deflectOn) return false;
 		let p = owner.player;
 
 		if (isHeld())
 		{
+			// [GUARDSEAT] ONE POSE SOURCE, AND THE SEAT TAKEN FROM THE MESH.
+			//
+			// Two faults were being fed in here at once, and both are measurement faults
+			// rather than geometry ones.
+			//
+			// TWO CLOCKS FOR ONE RIGID FRAME. The centre came from OffhandPos and the face
+			// direction from OffhandAngle/OffhandPitch -- written by the RENDERER, once per
+			// frame -- while the roll came from the usercmd LATCH, written once per tic. One
+			// hand, described by two writers sampled at different moments, so while the arm
+			// is moving the face and the centre describe different poses. In a netgame the
+			// position arrives by a netevent every OTHER tic on top of that.
+			//
+			// The latch is the honest source for anything that decides damage: it is part of
+			// the tic, it is the same on every machine, and it carries all three angles. Its
+			// yaw is already absolute world yaw and its pitch and roll are absolute
+			// (p_vrhand.cpp:57-62), so unlike OffhandAngle/OffhandPitch it needs no +90 and
+			// no negation -- applying those to it is how the face ends up 90 degrees out.
+			//
+			// A TYPED SEAT THAT NEVER MATCHED THE MODEL. The centre was the hand plus six
+			// units along the face normal, and the rim was a typed 14. The plate's real seat
+			// was measured off shield.md3 and shieldsaw.md3 (tools/md3measure.py): the front
+			// plate sits 4.23 units to the hand's left and 3.19 back toward the elbow, with a
+			// rim of 9.90 stowed and 12.04 with the blades out. The old six-unit push was
+			// along the normal, which for a left hand held across the chest is six units into
+			// your own body -- so the disc sat about ten units behind the face you could see.
+			//
+			// rs_ss_guard_latch and rs_ss_guard_mesh both default on and both switch back, so
+			// the old pose source and the old typed seat can be compared against these in one
+			// session instead of across a rebuild.
+			if (cvOn("rs_ss_guard_latch", p, true) && seatFromLatch())
+				return true;
+
 			// [SHIELDFACE] THREE AXES, NOT TWO. See HandRoll() above for why: yaw and pitch
 			// give where the hand POINTS, and a shield's face is across the forearm, not
 			// down it.
@@ -528,7 +768,12 @@ class RS_ShieldSaw : Weapon
 		// preferences must not guard different volumes; in single-player the sliders still do what
 		// they always did. (AnchorPos itself reads HmdPos, which is local too -- so the stowed guard
 		// in a netgame hangs off the pawn's own body yaw and nothing else.)
-		Vector3 a = RS_ShieldMount.AnchorPos(PlayerPawn(owner),
+		// THE DECIDING SEAT, NOT THE DRAWN ONE. AnchorPos rides HmdPos, which is local and
+		// reads as zero until the headset wakes up -- so this volume was being registered
+		// near the map origin, thousands of units from the player, every time it was asked
+		// before a pose existed, and at a place other machines disagreed with after. Measured
+		// 2026-10-17: `discaxis 3762.6`. The drawn mount still uses the live head.
+		Vector3 a = RS_ShieldMount.AnchorPosPlaysim(PlayerPawn(owner),
 			mountNum("rs_ss_mount_fwd",  -7.0),
 			mountNum("rs_ss_mount_side", -8.0),
 			mountNum("rs_ss_mount_frac",  0.86));
@@ -672,7 +917,153 @@ class RS_ShieldSaw : Weapon
 			return;
 		}
 
-		owner.player.SetGuardVolume(HandIndex(), guardCentre, guardNormal, guardRadius);
+		owner.player.SetGuardVolume(HandIndex(), guardCentre, guardNormal, guardRim);
+
+		// DRAWN FROM THE SAME THREE NUMBERS THAT WERE JUST REGISTERED, on the line below the
+		// call, so the ring cannot drift from the volume by a tic or by an edit. See drawGuard.
+		if (cvOn("rs_ss_guard_draw", owner.player, true)) drawGuard();
+	}
+
+	// ======================================================================
+	// [GUARDRING] THE PROOF THAT THE HITBOX IS THE SHIELD -- OR THAT IT IS NOT
+	// ======================================================================
+	//
+	// THIS IS AN INSTRUMENT, NOT AN EFFECT. The disc above is placed by arithmetic nobody has
+	// ever seen the result of: a standoff of six units along the face normal, a rim of
+	// fourteen, and a roll convention that cannot be read off a file. Every shield pass so far
+	// has reasoned about those three and none has looked at them, which is why four of them
+	// were wrong in a way the next one inherited.
+	//
+	// Thirty-two particles on the rim and six along the normal cost nothing and answer all
+	// three at once:
+	//   * the ring floats BEHIND the shield, toward your body -- the standoff is pushing the
+	//     face the wrong way, or into the body where nothing can reach it;
+	//   * the ring is visibly WIDER than the rim -- the radius is a slider, not the mesh;
+	//   * roll your wrist and the ring rolls the OTHER way -- rs_ss_face_invert is wrong.
+	//
+	// PARTICLES ARE NOT PLAYSIM. No thinker, no RNG, no actor: this cannot desync a netgame
+	// and cannot be blamed for one. It is drawn only for the holder's own eyes, so a co-op
+	// partner is not looking through someone else's instrumentation.
+	private void drawGuard()
+	{
+		if (!owner || owner.PlayerNumber() != consoleplayer) return;
+		if (guardNormal.Length() < 0.01) return;
+
+		// ANY two axes across the face will trace the same circle, so the ring needs no new
+		// state and cannot disagree with what was published. World up is the reference; if the
+		// face looks straight up or down, fall back to a horizontal axis so the frame never
+		// degenerates while the shield is overhead.
+		Vector3 u = guardNormal cross (0, 0, 1);
+		if (u.Length() < 0.05) u = (1, 0, 0);
+		u = u.Unit();
+		Vector3 v = (guardNormal cross u).Unit();
+
+		// Map space stretches Z by the pixelstretch, so a circle drawn with equal steps in
+		// both axes comes out as an oval unless the vertical part is divided back out. The
+		// ring has to be honest about its own shape before it can be used to judge anything
+		// else's.
+		double ps = level.pixelstretch > 0.1 ? level.pixelstretch : 1.2;
+
+		FSpawnParticleParams p;
+		p.color1 = "FF2020";
+		p.style = STYLE_Add;
+		p.flags = SPF_FULLBRIGHT;
+		p.lifetime = 1;          // one tic: it is redrawn every tic from the live volume
+		p.size = 1.5;
+		p.startalpha = 1.0;
+		p.fadestep = -1;
+		p.vel = (0, 0, 0);
+		p.accel = (0, 0, 0);
+		for (int i = 0; i < 32; i++)
+		{
+			double a = i * (360.0 / 32);
+			Vector3 r = u * (cos(a) * guardRim) + v * (sin(a) * guardRim);
+			p.pos = guardCentre + (r.x, r.y, r.z / ps);
+			Level.SpawnParticle(p);
+		}
+
+		// WHICH WAY IT LOOKS. Both faces block, so this stub is not a claim about blocking --
+		// it is the only way to see that the face is across the forearm rather than down it.
+		p.color1 = "20FF20";
+		for (int i = 1; i <= 6; i++)
+		{
+			Vector3 r = guardNormal * (i * 1.5);
+			p.pos = guardCentre + (r.x, r.y, r.z / ps);
+			Level.SpawnParticle(p);
+		}
+	}
+
+	// [DENT] A WORLD HIT POINT, PUT ON THE MESH.
+	//
+	// The engine reports where the blow met the face in WORLD coordinates. A mark has to be
+	// seated in the parent model's own mesh coordinates, and the only thing that can get from
+	// one to the other is the basis the seat was composed from -- which seatFromLatch keeps.
+	//
+	// THE MAPPING IS THE SEAT'S, RUN BACKWARDS. A mesh point reaches the hand's frame as
+	// 0.34 * (my, mz, -mx) once the MODELDEF scale and AngleOffset are folded in, so a
+	// displacement in hand axes (right, up, back) comes from a mesh displacement of
+	// (-back, right, up) / 0.34. Add the plate's own centre in mesh units and the result is a
+	// point on the plate.
+	//
+	// The vertical part is multiplied back by the pixelstretch it was divided by when the seat
+	// was built; without it every mark sits a little low on a tilted shield, which is the kind
+	// of error that reads as "the dents are wrong" rather than as an axis sign.
+	private void markDent(Vector3 pt)
+	{
+		if (!dentBasisOk) return;
+		if (!cvOn("rs_ss_dents", owner ? owner.player : null, true)) return;
+
+		// The shield that is actually drawn, which is what a mark must ride.
+		Actor host = RS_ShieldSawWorld.PropFor(HandIndex());
+		if (!host) return;
+
+		double ps = level.pixelstretch > 0.1 ? level.pixelstretch : 1.2;
+		Vector3 d = level.Vec3Diff(guardCentre, pt);
+		d = (d.x, d.y, d.z * ps);
+
+		double dr = d dot dentAxisR;
+		double du = d dot dentAxisU;
+		double db = -(d dot dentAxisF);
+
+		// The MODELDEF Scale this mesh is drawn at; a local, because ZScript has no function-
+		// scope const.
+		double meshScale = 0.34;
+		Vector3 mesh = (-db / meshScale, dr / meshScale, du / meshScale);
+		mesh += (-9.39, -12.45, 0.02);      // the plate's centre, measured (md3measure.py)
+
+		// EIGHT, REUSED OLDEST FIRST. A long fight is hundreds of blocks and each mark is an
+		// actor drawn every frame; without a cap the shield accrues a crowd of them.
+		if (dents.Size() < 8)
+		{
+			let nd = RS_ShieldDent(Actor.Spawn("RS_ShieldDent", host.pos, NO_REPLACE));
+			if (!nd) return;
+			dents.Push(nd);
+			nd.Seat(host, mesh);
+			return;
+		}
+		let nd = dents[dentNext % 8];
+		dentNext = (dentNext + 1) % 8;
+		if (nd) nd.Seat(host, mesh);
+	}
+
+	// WHERE THE ENGINE SAYS IT STOPPED SOMETHING. Yellow, and left standing for a second, so a
+	// block point reported out in the open air is visible as such instead of being taken on
+	// trust from a log line.
+	private void markBlock(Vector3 pt)
+	{
+		if (!owner || owner.PlayerNumber() != consoleplayer) return;
+		FSpawnParticleParams p;
+		p.color1 = "FFFF20";
+		p.style = STYLE_Add;
+		p.flags = SPF_FULLBRIGHT;
+		p.lifetime = 35;
+		p.size = 4.0;
+		p.startalpha = 1.0;
+		p.fadestep = -1;
+		p.vel = (0, 0, 0);
+		p.accel = (0, 0, 0);
+		p.pos = pt;
+		Level.SpawnParticle(p);
 	}
 
 	// WHAT THE ENGINE STOPPED FOR US, ANSWERED. The block itself is the engine's -- the blow
@@ -689,16 +1080,107 @@ class RS_ShieldSaw : Weapon
 	{
 		if (!owner || !owner.player) return;
 
-		int tic, hand;
+		int tic, hand, dmg;
+		Name dtype;
 		Vector3 pt, nrm;
-		[tic, hand, pt, nrm] = owner.player.GetGuardBlock();
+		[tic, hand, pt, nrm, dmg, dtype] = owner.player.GetGuardBlock();
 
 		if (tic < 0 || tic == lastBlockTic) return;
 		lastBlockTic = tic;
 		if (hand != HandIndex()) return;      // the other hand's guard, not this shield
 
-		owner.A_StartSound("rsshield/hit", CHAN_BODY);
-		level.VRHaptic(HandIndex(), 1.0, 90);
+		// [BLOCKFX] IT HAPPENS ON THE FACE, AND IT HAPPENS IN PROPORTION.
+		//
+		// Everything here used to come off the PAWN: a fixed clang on the player's own body
+		// channel, a fixed haptic, and no visual at all. So a pistol round and a rocket
+		// sounded the same, felt the same, and both appeared to be stopped by the player's
+		// chest rather than by the plate he was holding out in front of him -- the block was
+		// real and invisible, which is the one failure mode a parry cannot survive.
+		//
+		// Both halves of that are now answerable: the engine records where the blow met the
+		// face (it used to store the midpoint of the striker's line, which for an imp across
+		// the room is a point in the open air) and what it would have done.
+		//
+		// The scale runs from a light tap to a rocket. 40 damage is about a rocket's direct
+		// hit, so that is the top of the curve rather than an arbitrary ceiling.
+		double force = clamp(dmg / 40.0, 0.15, 1.0);
+
+		// THE IMPACT ITSELF, FROM THE SYSTEM THAT OWNS IMPACTS.
+		//
+		// This used to fan engine particles by hand. That was a stand-in and it showed: flat
+		// coloured dots, no smoke, no light, nothing that reads as steel being hit, and a
+		// second effect vocabulary living inside a mod whose only effects dependency is
+		// RS_Ballistics. The shield's deflect has called RSB_Impact since the day it was
+		// written; a block had simply never been wired to it, because until the engine
+		// recorded where the blow met the face there was no point to hand it -- the record
+		// used to hold the midpoint of the striker's line, a spot in the open air.
+		//
+		// WHICH PROFILE, FROM WHAT WAS BLOCKED. The engine now reports the damage type with
+		// the block, so a fireball splashes, a round sparks and plasma flashes, without this
+		// file knowing anything about any of those looks. The names are RS_Ballistics' own
+		// (RSBDEFS.txt) and the same four the deflect path already chooses between, so the two
+		// outcomes of meeting a shield look like the same shield.
+		String prof = "deflect";
+		if (dtype == 'Fire')                                 prof = "deflect_fire";
+		else if (dtype == 'Hitscan' || dtype == 'Bullet')    prof = "deflect_bullet";
+		else if (dtype == 'Plasma' || dtype == 'Electric')   prof = "deflect_energy";
+
+		// The sound and the look both come from the hit point rather than from the pawn: a
+		// clang started on the player is attached to the player and arrives from inside your
+		// own chest however far out the shield was held.
+		let fx = Actor.Spawn("RS_ShieldSawPuff", pt + nrm * 1.0, ALLOW_REPLACE);
+		if (fx)
+		{
+			if (nrm.xy.Length() > 0.001) fx.angle = VectorAngle(nrm.x, nrm.y);
+			fx.A_StartSound("rsshield/hit", CHAN_BODY, CHANF_OVERLAP, 0.4 + 0.6 * force);
+
+			// THE `true` IS inAirToo AND NOTHING DRAWS WITHOUT IT. A block happens in open air
+			// and the impact system correctly refuses to invent a surface that was never hit.
+			// The travel vector is INTO the face, which is the direction the blow was going.
+			RSB_Impact.Land(fx, prof, -nrm, true);
+		}
+		else owner.A_StartSound("rsshield/hit", CHAN_BODY);
+
+		// THE THUMP IS THE HOLDER'S, AND ONLY THE HOLDER'S. This ran for every player's block
+		// on every machine, so in a co-op game your controller kicked when the man across the
+		// room parried something. The sound above is playsim and belongs on every machine; a
+		// haptic is a thing that happens to one pair of hands.
+		if (owner.PlayerNumber() == consoleplayer)
+			level.VRHaptic(HandIndex(), 0.35 + 0.65 * force, 40.0 + 70.0 * force);
+
+		// [GUARDRING] and show where the engine says it landed. The engine records the real
+		// crossing on the face now, so this mark should sit ON the plate; if it ever floats in
+		// open air again, the block point has regressed.
+		if (cvOn("rs_ss_guard_draw", owner.player, true)) markBlock(pt);
+
+		// [DENT] and leave something behind. The threshold is in FORCE, not raw damage, so it
+		// means the same thing however the blow was caught and whatever the monster was: at
+		// least a third of a rocket. A shield covered in scorches after a corridor of pistol
+		// fire reads as noise rather than as history.
+		if (force >= 0.3) markDent(pt);
+
+		// [BLOCKCHARGE] WHAT YOU BLOCK FEEDS THE SAW. A block was pure defence: it cost the
+		// attacker nothing you could spend. Taking a rocket on the plate now spins the blade
+		// up, so standing behind the shield and eating a volley arms the thing in your hand
+		// and the two halves of the weapon finally pay into each other.
+		//
+		// Scaled by the blow, capped at the same 1.0 the trigger reaches, and it decays
+		// through the same drain in Tick -- so it is a head start on the rev, not a second
+		// resource with its own rules.
+		if (cvOn("rs_ss_block_charge", owner.player, true))
+			revLevel = min(1.0, revLevel + 0.5 * force);
+
+		// [HEAT] AND IT HEATS THE PLATE. Taking a rocket on the shield should leave it
+		// glowing; taking a pistol round should barely warm it. `force` is already the blow
+		// scaled against a rocket's direct hit, so the curve is the blow's own.
+		heatLevel = min(1.0, heatLevel + 0.45 * force);
+
+		// [COUNTER] A STAGGERED THING IS OPEN. The engine throws every striker that can see it
+		// into its own pain state when you block -- the owner's ruling -- and for the next
+		// twenty tics a bash into that thing does double damage. The window is on the BLOCK,
+		// not on the block's timing: nothing here asks the player to parry on a beat, which he
+		// has never asked for and which would make the shield a rhythm game.
+		counterUntil = level.maptime + 20;
 
 		// SAYS SO, because a parry that cancels a blow and a blow that missed look identical
 		// from inside a headset -- and the owner should not have to die to tell them apart.
@@ -709,147 +1191,28 @@ class RS_ShieldSaw : Weapon
 		}
 	}
 
-	private void sweepDeflect()
-	{
-		if (!guardPlane())
-		{
-			// SAYS SO RATHER THAN GOING QUIET. "No guard plane" and "the guard missed" look
-			// identical from inside a headset, and they are completely different faults.
-			if (cvOn("rs_ss_guard_diag", owner ? owner.player : null, false)
-				&& owner && owner.player && (level.maptime % 35) == 0)
-			{
-				C_MidPrint("SmallFont", isHeld()
-					? "\c[Red]SHIELD: no guard plane (deflect off?)"
-					: "\c[Grey]SHIELD: stowed, not guarding");
-			}
-			return;
-		}
-		Vector3 c = guardCentre, n = guardNormal;
+	// [REMOVED 2026-10-17] sweepDeflect() lived here: a SECOND disc test, run once a tic, that
+	// searched the level for missiles near the shield and reflected the ones it found.
+	//
+	// It was deleted rather than repaired, for three reasons that are all structural.
+	//
+	//   IT COULD NOT SEE THE TWO ATTACKS THAT MATTER. An RSB_EnemyBullet covers 245 map units
+	//   in a tic and a shotgunner stands sixty away, so the round is born and gone between two
+	//   of its looks; a claw is never an actor at any moment, so no rate of search finds it.
+	//   The engine registry answers at the instant a blow resolves and has no sampling in it.
+	//
+	//   TWO TESTS, ONE SHIELD. It ran its own crossing arithmetic against the same plane the
+	//   registry tests, so the shield could block one way and not the other depending on which
+	//   half caught a thing first -- a fault that reproduces on nobody else's machine.
+	//
+	//   IT CHOSE AN OUTCOME THE OWNER DID NOT. It REFLECTED. His ruling is cancel by default,
+	//   deflect as an option (OWNER_RULINGS.md, 2026-10-17). A reflection that happens because
+	//   a second code path got there first is not an option, it is a surprise.
+	//
+	// deflect() below is kept deliberately: its classification of what a turned shot LOOKS like
+	// is real work and is what ruling 7s option will call once the engine can intercept a
+	// missile at the plate and hand it back still flying (E3/E7, step 11).
 
-		// NOT A BLOCKMAP ITERATOR, AND IT NEVER COULD HAVE BEEN.
-		//
-		// This used to be BlockThingsIterator over a box of guardRadius + 48. A projectile is
-		// not in the blockmap at all: `projectile` sets MF_NOBLOCKMAP along with MF_MISSILE,
-		// and LinkToWorld skips the blockmap link for MF_NOBLOCKMAP, so the iterator could
-		// never return one. The guard was catching NOTHING -- not "1 in 5 tunnelled", not
-		// "78%", zero -- and had been since the old shootable deflector actor was removed.
-		//
-		// level.CollectMissiles is the engine's own list of live missiles, kept because the
-		// engine is the only place that sees every spawn. Radius 0 asks for all of them and
-		// the cull below is per missile, using that missile's OWN speed: the old fixed 48-unit
-		// box was the second half of the bug, because an RSB_EnemyBullet covers 80 units in a
-		// tic and could start the tic outside a 62-unit box and end it behind the shield.
-		Array<Actor> missiles;
-		level.CollectMissiles(c.x, c.y, c.z, 0, missiles);
-
-		for (int mi = 0; mi < missiles.Size(); mi++)
-		{
-			Actor mo = missiles[mi];
-			if (!mo || !mo.bMissile || mo.bNoInteraction || mo.bNoClip) continue;
-
-			// Per-missile cull: could this one possibly touch the disc this tic? Its own
-			// travel plus both radii, so nothing fast is culled by a number chosen for
-			// something slow.
-			if (level.Vec3Diff(c, mo.Pos).Length() > guardRadius + mo.radius + mo.Vel.Length())
-				continue;      // too far to matter: deliberately silent, it is most of the map
-			// YOURS PASSES. Once turned, a missile's target IS you -- which is also what stops it
-			// being caught a second time on its way back out.
-			if (mo == owner || mo.target == owner || mo.master == owner)
-			{
-				guardSay(GR_YOURS, mo, 0);
-				continue;
-			}
-			if (mo is "RS_ShieldInFlight") continue;
-
-			// [FASTCATCH] THE SEGMENT IT HAS ALREADY FLOWN, NOT THE ONE IT IS ABOUT TO.
-			//
-			// This looked FORWARD: where is the missile now, and where will it be after one
-			// more tic of Vel. That works for a fireball and fails completely for the thing
-			// the owner was actually shot by.
-			//
-			// RSB_EnemyBullet is a FastProjectile at Speed 245 -- 245 map units in a tic, and
-			// a FastProjectile subdivides its own movement into sub-steps inside one Tick so
-			// it cannot tunnel through a wall. A shotgunner at point blank is sixty units
-			// away. That round spawns and reaches the player inside a single tic, so there is
-			// no tic boundary at which it is in front of the face and "will cross next tic":
-			// by the shield's first look it is already past, which reads as came-from-behind
-			// and is rejected. The shield was not pointing the wrong way; it was looking the
-			// wrong way in TIME.
-			//
-			// Actor.Prev is where this missile was at the end of last tic -- the engine keeps
-			// it for render interpolation. The span Prev -> Pos is the ground it actually
-			// covered, sub-steps included, which is exactly the segment that should be tested
-			// against the plane. A missile that spawned this tic has Prev at its spawn point,
-			// so a point-blank shot is a real segment from the muzzle to the player rather
-			// than a single point already behind the shield.
-			//
-			// The forward look is KEPT as well, because a slow missile that has not reached
-			// the face yet is still caught a tic early the way it always was. Either span
-			// crossing the plane is a catch.
-			Vector3 v = mo.Vel;
-			Vector3 rel = Level.Vec3Diff(c, mo.Pos);      // the missile, relative to the face
-
-			Vector3 relPrev = Level.Vec3Diff(c, mo.Prev);
-			double dPrev = relPrev dot n;                 // where it was last tic
-			double dNow  = rel dot n;                     // where it is now
-
-			// It crossed the plane DURING this tic: in front then, behind or touching now.
-			bool crossedBehind = (dPrev > 0 && dNow <= mo.radius * 0.5
-				&& (relPrev - rel).Length() > 0.0001);
-
-			double d0 = rel dot n;                        // in front of it is positive
-			double d1 = (rel + v) dot n;                  // and where it will be next tic
-
-			if (crossedBehind)
-			{
-				// Use the span it really flew. Everything below reads d0/span/t, so point
-				// those at the travelled segment and the disc test is unchanged.
-				d0 = dPrev;
-				d1 = dNow;
-				rel = relPrev;
-				v = rel * 0 + (Level.Vec3Diff(mo.Prev, mo.Pos));   // Prev -> Pos
-			}
-
-			// FROM THE FRONT, AND IT HAS TO REACH THE PLANE THIS TIC. The missile's own radius is
-			// slack on the far side, so a round stopping just short still counts as arriving.
-			// A SHIELD IS A DISC, AND BOTH ITS FACES BLOCK.
-			//
-			// This used to require d0 > 0 -- the round had to arrive from the side the
-			// normal happened to point at. That is the single reason the owner could only
-			// ever block at one wrist angle: with the face turned any other way, every
-			// incoming round was "behind" it and was dropped. It is also just wrong about
-			// what a shield is. Nobody holds a riot shield and asks which way its normal
-			// faces; a thing that crosses the disc stops, from either side.
-			//
-			// So the test is now purely: did the segment this round travelled cross the
-			// plane of the disc, in either direction? The sign of d0 no longer gates
-			// anything -- only the CHANGE of sign does, which is what crossing means.
-			double span = d0 - d1;
-			if (span * span <= 0.00000001) continue;        // parallel to the plane
-			if ((d0 > 0) == (d1 > 0))
-			{
-				// Never reached the plane during this span, from either side.
-				guardSay(GR_SHORT, mo, d1);
-				continue;
-			}
-
-			double t = clamp(d0 / span, 0.0, 1.0);
-			Vector3 hit = rel + v * t;
-			Vector3 radial = hit - n * (hit dot n);
-			if (radial.Length() > guardRadius + mo.radius)
-			{
-				guardSay(GR_WIDE, mo, radial.Length() - (guardRadius + mo.radius));
-				continue;
-			}
-
-			guardSay(GR_CAUGHT, mo, 0);
-
-			// OUT THE SIDE IT CAME IN. With both faces blocking, a fixed normal would send
-			// half of everything straight through the shield. Flip it to face the arrival.
-			Vector3 nOut = (d0 > 0) ? n : -n;
-			deflect(mo, nOut);
-		}
-	}
 
 	// TURNED, NOT EATEN. Back at whoever fired it while they are still standing, and mirrored off
 	// the face otherwise -- a shot that came from a corpse still has to go somewhere, and somewhere
@@ -975,15 +1338,72 @@ class RS_ShieldSaw : Weapon
 		if (pmo.CountInv("PowerStrength")) dmg *= 4;
 		int idmg = max(1, int(round(dmg)));
 
+		// [GRINDPLANE] THE FAN LIES IN THE BLADE'S PLANE, WHICH MEANS IT TURNS WITH YOUR WRIST.
+		//
+		// The five traces stepped `pitch + i * 22` -- a purely VERTICAL fan, around the hand's
+		// forward axis, with no reference to roll at all. A disc is a flat thing: held upright
+		// its cutting arc is vertical and that fan was right by accident, but held FLAT the arc
+		// is horizontal while the fan stayed vertical, so the saw cut in a plane perpendicular
+		// to its own blade. That is the whole of "the grind cuts in the wrong plane".
+		//
+		// The blade's plane is the one perpendicular to the face normal, and the roll is what
+		// says where that plane lies: at roll 0 the fan is vertical, as it was, and at roll 90
+		// it is horizontal. Splitting the step between pitch and yaw by the roll puts the fan
+		// in the plane for every angle between, in the same yaw/pitch terms LineAttack already
+		// takes, without touching the controller-delta behaviour the comment above relies on.
+		//
+		// The yaw term is divided by the pitch cosine because a degree of yaw covers less
+		// ground the further the hand points up or down; without it a saw held flat and aimed
+		// at the floor sweeps a wider arc than the same saw aimed level.
+		double rl = invoker.HandRoll();
+		if (RS_ShieldSaw.cvOn("rs_ss_face_invert", player, false)) rl = -rl;
+		double fanP = cos(rl), fanY = sin(rl);
+		double yawScale = 1.0 / max(0.25, abs(cos(pitch)));
+
+		// [GRINDREACH] AS FAR AS THE BLADE, NOT FOUR TIMES AS FAR. 48 units is nearly five
+		// times the disc's own radius, so the saw "ground" things a metre and a half away that
+		// it visibly never touched. The rim plus a little slack is what the player can see
+		// the blade reaching; guardRim is the measured mesh rim, 9.9 or 12.04 with the blades
+		// out, so a revved saw genuinely reaches further than a stowed one.
+		double reach = max(invoker.guardRim, 8.0) + 8.0;
+
+		// [GRINDREV] IT SPINS UP. A saw at full bite the instant you touch the trigger has no
+		// weight to it; this rises while you hold and bleeds off when you stop, so a tap does
+		// little and holding it digs in.
+		//
+		// THE TWO RATES ARE SET AGAINST THE GRIND'S CADENCE, NOT PICKED. The grind fires about
+		// every third tic while Tick bleeds the rev EVERY tic, so a rise that is not more than
+		// three times the decay can never climb at all -- the first numbers here were +0.08
+		// against -0.10 and the rev would have sat at zero for ever while reading as
+		// implemented. +0.20 a grind against -0.035 a tic nets about +0.095 every three tics,
+		// which simulates out at 27 tics to full bite (0.77 s) and 29 to spin back down
+		// (0.83 s), with the damage scale running 0.56x to 1.0x across it.
+		invoker.revLevel = min(1.0, invoker.revLevel + 0.20);
+		double rev = 0.45 + 0.55 * invoker.revLevel;
+		idmg = max(1, int(round(dmg * rev)));
+
 		// A FORWARD ARC, NOT A SPHERE. `i <= 12` at 30 degrees swept a full
 		// vertical circle -- straight up, straight down and straight backwards --
 		// and traced the forward direction twice into the bargain. Five steps of
 		// 22 degrees is the arc a disc held in front of you actually sweeps.
 		for (int i = -2; i <= 2; i++)
-			pmo.LineAttack(ang, GRIND_RANGE, pitch + i * 22, idmg,
-			               'Melee', "RS_ShieldSawPuff", laflags);
+		{
+			double step = i * 22.0;
+			// [GRINDTYPE] 'Saw', NOT 'Melee'. The thrown disc already does 1.5 damage as
+			// 'Saw' (rs_shieldsaw_actors.zs), which is what gore mods key their saw and cut
+			// deaths on -- so the blade in your hand was the one thing in the mod that could
+			// never produce saw gore, and a spinning blade killing like a punch is the whole
+			// difference between a saw and a stick.
+			pmo.LineAttack(ang + step * fanY * yawScale, reach, pitch + step * fanP, idmg,
+			               'Saw', "RS_ShieldSawPuff", laflags);
+		}
 
-		level.VRHaptic(invoker.HandIndex(), 0.35, 30.0);
+		// [HEAT] A BLADE IN MEAT AND BONE GETS HOT. Fed by the rev rather than by the hits,
+		// so holding the trigger down in open air warms it slowly and burying it in something
+		// does the rest through the blocked-damage path above.
+		invoker.heatLevel = min(1.0, invoker.heatLevel + 0.012 * invoker.revLevel);
+
+		level.VRHaptic(invoker.HandIndex(), 0.2 + 0.3 * invoker.revLevel, 30.0);
 	}
 
 	// ======================================================================
@@ -1121,8 +1541,38 @@ class RS_ShieldSaw : Weapon
 		return v != 0.0 ? v : d;
 	}
 
+	// [THROWFRAME] ONE MEASUREMENT, IN THE BODY'S FRAME, WITH NO SECOND THRESHOLD.
+	//
+	// Three faults were stacked here and each one on its own produced a wrong throw.
+	//
+	//   TWO THRESHOLDS THAT DISAGREED. The gate passed a release at 25 units per second
+	//   (about 0.74 m/s) while the throw service returned a flat ZERO below 1.2 m/s. A
+	//   release between the two therefore passed the gate and arrived with rel = (0,0,0),
+	//   and LaunchNow's no-release branch then kept the spawn velocity -- full Speed 22
+	//   along wherever the hand happened to POINT. A gentle toss came out as a hard straight
+	//   shot in the wrong direction, which is not a tuning problem, it is two numbers that
+	//   were never compared.
+	//
+	//   NO ARM THROW AT ALL WITHOUT RS_WORLDHANDS. With no service to ask this returned
+	//   zero, so every throw was the pointed shot above. The README calls this mod
+	//   standalone, so the measurement cannot live in another mod.
+	//
+	//   THE ROOM FRAME, COUNTED TWICE. The reading is room-relative, and roomscale walking
+	//   is pushed into the pawn as locomotion -- then LaunchNow adds owner.Vel on top. A
+	//   real step taken during the throw landed in both terms. Subtracting the pawn's own
+	//   velocity here leaves the ARM's contribution, and LaunchNow's owner.Vel then adds the
+	//   body's once. A standing throw is unchanged, which is the common case.
+	//
+	// UNITS: thousandths of a map unit PER TIC, because that is what rs-ss-throw carries and
+	// what ThrowNow divides back out. level.HandVelAtPoint answers per SECOND, so a fallback
+	// that forgets the 35 would be thirty-five times wrong and still look plausible.
 	static Vector3 MeasureRelease(PlayerPawn pmo, int hand)
 	{
+		if (!pmo) return (0, 0, 0);
+
+		Vector3 th = (0, 0, 0);          // thousandths of a map unit per tic
+		bool got = false;
+
 		ServiceIterator it = ServiceIterator.Find("RS_ThrowService");
 		Service sv;
 		while (sv = it.Next())
@@ -1141,9 +1591,29 @@ class RS_ShieldSaw : Weapon
 			double mx = sv.GetInt("throw.vel.hand.x", "", hand, 0, pmo, 'RS_ShieldSaw');
 			double my = sv.GetInt("throw.vel.hand.y", "", hand, 0, pmo, 'RS_ShieldSaw');
 			double mz = sv.GetInt("throw.vel.hand.z", "", hand, 0, pmo, 'RS_ShieldSaw');
-			return (mx, my, mz);
+			th = (mx, my, mz);
+			got = th.Length() >= 1.0;    // the service answers ZERO below its own floor
+			break;
 		}
-		return (0, 0, 0);
+
+		// OUR OWN MEASUREMENT, from the same quarter-second peak ring the gate reads, so the
+		// thing that decides a throw happened and the thing that decides how hard are one
+		// number. This is also the whole throw when RS_WorldHands is not loaded.
+		if (!got)
+		{
+			double ageMs = level.HandPeakAgeMs(hand);
+			Vector3 pk = (0, 0, 0);
+			if (ageMs >= 0 && ageMs <= 200)
+				pk = level.HandVelAtPoint(hand, (0, 0, 0), RS_HAND_PEAK);
+			if (pk.Length() <= 0)
+				pk = (hand == 1) ? pmo.OffhandVel : pmo.AttackVel;   // last resort, one sample
+			// per second -> per tic, then to thousandths.
+			th = pk * (1000.0 / 35.0);
+		}
+
+		// [THROWFRAME] the arm, not the arm plus the legs. See the header.
+		th -= pmo.Vel * 1000.0;
+		return th;
 	}
 
 	// THE OTHER TWO THINGS ONLY THE THROWER CAN KNOW (2026-09-28).
@@ -1285,7 +1755,26 @@ class RS_ShieldSaw : Weapon
 		// and disc_teeth_texture.py -- run them before changing this number.
 		double baseSpin = RS_ShieldSaw.cvNum("rs_ss_spin_base", owner.player, 66.1);
 		f.spinRate = (wristSpin < 0 ? -1.0 : 1.0) * max(abs(wristSpin), baseSpin);
+
+		// [SPINLIFT] HOW MUCH THE SPIN HOLDS IT UP, measured against the FLOOR rather than
+		// against a number from nowhere.
+		//
+		// The flight divided the spin rate by 31 and clamped the result to 1.5. The spin rate
+		// can never be below the floor of 66.1, and 66.1/31 is 2.13, so the clamp was hit on
+		// every throw that has ever been made and the wrist could not change the lift by any
+		// amount -- while the comment beside it described a model where it did. The ratio to
+		// the floor is the honest version: a flat throw lifts by 1, a hard twist lifts more,
+		// up to half again.
+		f.spinLift = clamp(abs(f.spinRate) / max(baseSpin, 1.0), 0.0, 1.5);
 		f.speedMult = throwSpeed;
+
+		// [BLADES] THE OWNER'S RULING 6: the rev at the moment of release decides which throw
+		// this is. Half spun up is the line -- it takes about 0.4 s of held trigger to reach,
+		// so a deliberate rev clears it and an incidental brush of the trigger does not.
+		//
+		// revLevel is read here and not reset: it keeps bleeding off in Tick as it would have,
+		// so letting go mid-rev does not also wipe the saw you are still holding.
+		f.bladesOut = (revLevel >= 0.5);
 		f.dmgMult   = cutDamage;
 
 		// ---- THE HEADING YOUR ARM GAVE IT, when nothing is locked -----------
@@ -1393,6 +1882,23 @@ class RS_ShieldSaw : Weapon
 		ClearLocks();
 		let st = RS_ShieldState.Get();
 		if (st && owner) st.Landed(owner.PlayerNumber());
+	}
+
+	// [CATCH] CAUGHT, NOT COLLECTED. The disc reached a hand that was closing on it, so it
+	// goes back into that hand instead of vanishing and reappearing on your back.
+	//
+	// The comment above this pair used to argue that a catch window is "a tuning problem with
+	// no good answer: too tight and you drop it, too loose and it snaps to you from across the
+	// room". That is true of a window measured in DISTANCE alone, which is what it had. Asking
+	// for a grip as well splits the two apart: the radius can be tight, because the player has
+	// told the game he is trying to catch it, and a disc arriving at an open hand simply flies
+	// on to the shoulder as it always did.
+	void Caught()
+	{
+		flying = null;
+		ClearLocks();
+		let st = RS_ShieldState.Get();
+		if (st && owner) st.Caught(owner.PlayerNumber());
 	}
 
 	// Returns a state rather than setting one: SetWeaponState is an RLVR

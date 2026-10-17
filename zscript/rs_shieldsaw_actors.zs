@@ -48,6 +48,25 @@ class RS_ShieldInFlight : Actor
 	// flight. throwRoll below was sampled ONCE and held, which is a facing, not
 	// a spin.
 	double          spinRate;
+	// [SPINLIFT] the spin as a multiple of the floor spin, computed at launch. See LaunchNow:
+	// dividing spinRate by a bare 31 here could only ever produce the clamp.
+	double          spinLift;
+	// [D-RET] THE WAY IT CAME. Dropped on the outbound legs and walked back on the way home,
+	// so the disc returns through the door it went out of instead of through the wall beside
+	// it. Three arrays rather than an Array<Vector3>: ZScript has no vector array that
+	// survives serialization reliably, and three doubles cannot be got wrong.
+	Array<double>   crumbX, crumbY, crumbZ;
+	bool            whirring;      // [WHIRR] the looping flight sound has been started
+	// [BLADES] WHICH THROW THIS IS -- the owner's ruling 6, decided by the REV at release
+	// (2026-10-17). Blades out: it saws, bisects and embeds, as it always did. Blades stowed:
+	// a hard flat disc that bounces off what it hits instead of cutting into it.
+	//
+	// He answered the question as "trigger held at release" first, then pointed out the disc
+	// already cuts in flight by impact tier whatever the trigger did -- so the rev is the
+	// honest tell: a blade that is already spinning when you let go leaves spinning, and one
+	// left idle is a lump of steel. It also needs no input change, which the trigger version
+	// did: painting locks is welded to the same button.
+	bool            bladesOut;
 	// WHERE IN ITS TURN THE DISC IS. Advanced by spinRate every tic and written to PITCH, which is
 	// the actor angle that turns about this mesh's face normal (models.cpp:1590 rotates pitch about
 	// GL Z = map Y, and the disc is 47 x 2.89 x 47 with its thin axis on Y). roll stays the throw
@@ -184,10 +203,44 @@ class RS_ShieldInFlight : Actor
 		return (master.pos.xy, master.pos.z + master.height * 0.75);
 	}
 
+	// [D-RET] A CRUMB EVERY THIRD TIC ON THE WAY OUT. Three tics at 22 units is a crumb every
+	// 66 units, which is finer than any corner the disc can turn, and 128 of them is nine
+	// seconds of flight -- longer than the twelve-second timeout can spend going outbound.
+	private void DropCrumb()
+	{
+		if (homing) return;
+		if ((level.maptime % 3) != 0) return;
+		if (crumbX.Size() >= 128) return;
+		crumbX.Push(pos.x); crumbY.Push(pos.y); crumbZ.Push(pos.z);
+	}
+
+	// WHERE TO STEER ON THE WAY HOME. The hand if the disc can SEE the hand; otherwise the
+	// most recent crumb it has not reached yet.
+	//
+	// steerHome flew a straight line at the hand and leaned on bounce, the stall timer and
+	// twenty tics of NOCLIP to get through whatever was in the way -- which is the return
+	// going through walls, as a design rather than as a bug. Walking the crumbs back means
+	// the geometry is never crossed in the first place, and the NOCLIP escape below stops
+	// being the normal case and goes back to being an escape.
+	private Vector3 ReturnTarget(Vector3 hand)
+	{
+		// SF_IGNOREVISIBILITY: a player under invisibility is still where the disc is going.
+		if (master && CheckSight(master, SF_IGNOREVISIBILITY)) return hand;
+
+		while (crumbX.Size() > 0)
+		{
+			int n = crumbX.Size() - 1;
+			Vector3 c = (crumbX[n], crumbY[n], crumbZ[n]);
+			if (level.Vec3Diff(pos, c).Length() > radius + 8.0) return c;
+			crumbX.Pop(); crumbY.Pop(); crumbZ.Pop();
+		}
+		return hand;   // nothing left to follow: the straight line, as before
+	}
+
 	private void steerHome()
 	{
 		if (!master) { Destroy(); return; }
-		Vector3 hp = homePoint();
+		Vector3 hp = ReturnTarget(homePoint());   // [D-RET] the way it came, if it cannot see the hand
 		double ang = atan2(hp.y - pos.y, hp.x - pos.x);
 		double pit = -atan2(hp.z - pos.z, max(1.0, (hp.xy - pos.xy).Length()));
 		Vel3DFromAngle(Speed * speedMult * 1.6, ang, pit);
@@ -220,6 +273,20 @@ class RS_ShieldInFlight : Actor
 		// or spin-travel this tic. It still spins in place -- the phase below is the
 		// face turning, not movement.
 		if (embedTick()) return;
+
+		// [D-RET] remember the way out, before anything steers this tic.
+		DropCrumb();
+
+		// [WHIRR] A THROWN SAW IS AUDIBLE. It had no flight sound at all, so a disc crossing
+		// a room was silent and you could not tell where it was without turning to look.
+		// Started here rather than in a Spawn state because the flight actor's states are
+		// driven by the spin phase; CHANF_LOOPING on its own channel plays once and keeps
+		// playing, and Destroy() takes it with the actor.
+		if (!whirring)
+		{
+			whirring = true;
+			A_StartSound("rsshield/whirr", CHAN_VOICE, CHANF_LOOPING, 0.7);
+		}
 
 		// THE PLANE IS HELD, NOT DERIVED. Vel3DFromAngle rewrites pitch every
 		// time the shield steers, and PitchFromMomentum used to overwrite it
@@ -281,7 +348,7 @@ class RS_ShieldInFlight : Actor
 			double flat = abs(cos(throwRoll));
 			double fwd  = Vel.xy.Length() / max(1.0, Speed * speedMult);
 			double lift = RS_ShieldSaw.CvarNumServer("rs_ss_lift", 0.09)
-			            * clamp(abs(spinRate) / 31.0, 0.0, 1.5)
+			            * clamp(spinLift > 0 ? spinLift : 1.0, 0.0, 1.5)
 			            * clamp(fwd, 0.0, 1.5)
 			            * flat;
 			Vel.z -= max(fall - min(lift, fall), 0.0);
@@ -291,9 +358,26 @@ class RS_ShieldInFlight : Actor
 		{
 			steerHome();
 			Vector3 hp = homePoint();
+			double gap = Level.Vec3Diff(pos, hp).Length();
+
+			// [CATCH] A TIGHT RADIUS, BUT ONLY FOR A HAND THAT IS CLOSING. Half a metre is
+			// about 17 map units; the loose stow window below is 40, which is over a metre
+			// and is why the disc used to "snap home" from arm's length. A grip inside the
+			// tight radius is a catch; anything else falls through to the stow.
+			if (launcher && master && master.player)
+			{
+				int pn = master.PlayerNumber();
+				if (gap < max(17.0, vel.Length()) && RS_ShieldState.CatchWindow(pn))
+				{
+					launcher.Caught();
+					Destroy();
+					return;
+				}
+			}
+
 			// The window has to be at least one tic of travel wide, or a fast
 			// shield steps straight past the hand and orbits.
-			if (Level.Vec3Diff(pos, hp).Length() < max(40.0, vel.Length() * 1.2))
+			if (gap < max(40.0, vel.Length() * 1.2))
 			{
 				if (launcher) launcher.Landed();
 				master.A_StartSound("rsshield/hit", CHAN_BODY);
@@ -385,6 +469,25 @@ class RS_ShieldInFlight : Actor
 		// already felt right.
 		if (!RS_ShieldTier.On(self)) return roll;
 
+		// [BLADES] A STOWED DISC DOES NOT SAW. It arrives edge-on with no teeth turning, so
+		// it hits hard and comes off rather than biting in: no bisection, no embedding, blunt
+		// damage, and it bounces away to carry on its route or come home. This is what makes
+		// the two throws feel different rather than merely scoring differently.
+		if (!bladesOut)
+		{
+			A_StartSound("rsshield/bounce", CHAN_BODY);
+			// Off the body, the way it comes off a wall. Reversed and turned aside rather
+			// than mirrored about a surface normal we do not have for an actor.
+			Vector3 away = level.Vec3Diff(victim.pos, pos);
+			if (away.xy.Length() > 0.001)
+			{
+				double a = atan2(away.y, away.x);
+				Vel3DFromAngle(Speed * speedMult * 0.8, a, -asin(clamp(vel.z / max(1.0, vel.Length()), -1.0, 1.0)));
+			}
+			// Blunt, and about two thirds of a cut: it is a shield edge, not a blade.
+			return max(1, int(roll * 0.65));
+		}
+
 		int tier = RS_ShieldTier.Of(victim, self);
 
 		if (tier == RS_ShieldTier.FODDER)
@@ -430,6 +533,43 @@ class RS_ShieldInFlight : Actor
 	}
 
 	// [TIERS] The embed: hold on the victim and grind, then leave. Called from Tick.
+	// [YANK] RIP IT OUT. The disc is buried in something and the player has pulled his hand
+	// back with a closed fist, so it tears free and drags the victim a step toward him instead
+	// of finishing its grind and leaving on schedule.
+	//
+	// The drag is a Thrust on the VICTIM rather than a pull on the disc: the shield is the
+	// thing with momentum and the body is what gives. A step, not a yank across the room --
+	// 6 units a tic for a few tics reads as being hauled off balance, which is what a saw
+	// coming out of your chest should do.
+	bool Yank()
+	{
+		if (!embedIn || embedIn.health <= 0) return false;
+		Actor victim = embedIn;
+
+		// Toward the hand, in the plane the victim can actually be moved in.
+		Vector3 home = homePoint();
+		Vector3 away = level.Vec3Diff(victim.pos, home);
+		if (away.xy.Length() > 0.001)
+		{
+			double ang = atan2(away.y, away.x);
+			victim.Thrust(6.0, ang);
+		}
+		victim.TriggerPainChance('Saw', true);
+
+		// The gore is the point: a disc tearing out of a body is the loudest thing the mod
+		// can do, and it had no event at all.
+		victim.A_StartSound("rsshield/hit", CHAN_BODY, CHANF_OVERLAP, 1.0);
+		if (master && master.player && master.PlayerNumber() == consoleplayer)
+			level.VRHaptic(1, 1.0, 110);
+
+		embedIn   = null;
+		embedTics = 0;
+		bNOCLIP   = true;
+		noclipFor = 4;        // clear the body it was inside before steering home
+		GoHome();
+		return true;
+	}
+
 	private bool embedTick()
 	{
 		if (!embedIn) return false;
@@ -654,14 +794,93 @@ class RS_ShieldSawPuff : Actor
 		+ALWAYSPUFF
 		+DONTSPLASH
 		+NOTONAUTOMAP
+
+		// [GRINDSOUND] THE CLANK ONLY WHEN IT BIT SOMETHING.
+		//
+		// The sound used to be an A_StartSound in the Spawn state, and +ALWAYSPUFF means a
+		// puff spawns whether the trace hit anything or not -- so five traces, twelve times a
+		// second, each spawning a puff that clanked, gave about sixty impacts a second while
+		// the saw span in EMPTY AIR. It sounded like grinding a wall you were nowhere near.
+		//
+		// SeeSound is the engine's own answer: P_SpawnPuff plays it only when the trace hit an
+		// actor (PF_HITTHING, p_mobj.cpp:7349) and plays AttackSound otherwise -- so leaving
+		// AttackSound unset makes a miss silent with no test of our own. It also arrives as
+		// CHANF_RUMBLE for a melee hit by the console player, which is a haptic for free.
+		SeeSound "rsshield/hit";
 	}
 
 	States
 	{
 	Spawn:
 	Melee:
-		TNT1 A 0 A_StartSound("rsshield/hit", CHAN_BODY, CHANF_OVERLAP, 0.4);
 		TNT1 A 2;
 		Stop;
 	}
 }
+
+// ===========================================================================
+// [DENT] A MARK ON THE PLATE, WHERE THE BLOW ACTUALLY LANDED
+// ===========================================================================
+//
+// The shield took a rocket and looked exactly as it did before. Every other part of a block
+// now answers -- the clang comes from the point, the sparks come off the face, the striker
+// reels, the steel heats -- but nothing STAYS, so a shield that has turned away a dozen
+// attacks is indistinguishable from one fresh out of the box.
+//
+// HOW IT STICKS. FollowActor draws this model inside the shield prop's drawn frame, every
+// frame, at draw rate; FollowActorOfsInModel means the seat is read as a point on the
+// PARENT'S MESH, so the renderer carries it through the shield's scale, mirror and MODELDEF
+// orientation and the mark lands where the mesh is, not where a world offset guesses it is.
+// It needed no engine work at all: I said it would, and it does not.
+//
+// WHY A POOL. A long fight is hundreds of blocks and each mark is an actor; without a cap the
+// shield accrues an unbounded crowd of them, all drawn every frame. Eight, reused oldest
+// first, is enough that the plate reads as battered and few enough to cost nothing.
+class RS_ShieldDent : Actor
+{
+	Default
+	{
+		Radius 1;
+		Height 1;
+		+NOBLOCKMAP
+		+NOGRAVITY
+		+NOINTERACTION
+		+NOTONAUTOMAP
+		+DONTSPLASH
+		// It is soot on steel, so it darkens rather than adds. A dent drawn additively would
+		// GLOW, which is the opposite of what a burn does to a surface.
+		RenderStyle "Translucent";
+		Alpha 0.95;
+	}
+
+	// The seat is given in the parent's mesh coordinates. See RS_ShieldSaw.markDent for how a
+	// world hit point becomes one.
+	void Seat(Actor parent, Vector3 meshPoint)
+	{
+		FollowActor = parent;
+		FollowActorOfsInModel = true;
+		// The renderer's model space is y up, so an MD3/OBJ-file point (x, y, z) goes in as
+		// (x, z, y). Stated here, once, rather than at the call site.
+		FollowActorOfs = (meshPoint.x, meshPoint.z, meshPoint.y);
+		// Near the parent, because an actor's own position still decides whether it is drawn
+		// at all -- a mark seated perfectly but left at the map origin is culled and never
+		// appears, with nothing to say why.
+		SetOrigin(parent.pos, false);
+	}
+
+	override void Tick()
+	{
+		// It rides the drawn frame, so it does not move itself; but it must follow the parent
+		// through the world or the cull above will drop it the moment the player walks away.
+		if (!FollowActor || FollowActor.health < 0) { Destroy(); return; }
+		SetOrigin(FollowActor.pos, true);
+	}
+
+	States
+	{
+	Spawn:
+		SDNT A -1;
+		Stop;
+	}
+}
+

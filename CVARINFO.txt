@@ -344,3 +344,64 @@ user bool rs_ss_face_invert = false;
 // is close enough to be considered, a strong pulse and a green flash on a catch, and a
 // midprint naming the test that rejected it. For finding a fault in one pass instead of forty.
 user bool rs_ss_guard_diag = true;
+
+// [GUARDRING] DRAW THE HITBOX YOU ACTUALLY BLOCK WITH -- a red ring on the rim of the disc
+// that was registered with the engine this tic, and a short green stub along the way its face
+// looks.
+//
+// Four passes of shield work argued about where this disc was without once looking at it. The
+// ring is not a decoration and not a guess: it is the registered volume itself, traced from
+// the same three numbers the damage test is given. Where it sits beside the drawn shield IS
+// the measurement, and one look settles the centre, the size and which way roll turns the
+// face -- three things that between them cost days of inference.
+//
+// A yellow mark lands wherever the engine last recorded a block, so a parry that reports its
+// point out in the open air can be seen doing it rather than argued about.
+//
+// On while the shield is being fixed. Turn it off when it is boring.
+user bool rs_ss_guard_draw = true;
+
+// [GUARDSEAT] WHERE THE BLOCKING DISC COMES FROM.
+//
+// On: the replicated usercmd latch, and the plate seat measured off the model -- 4.23 units
+// to the hand left, 3.19 back toward the elbow, rim 9.90 (12.04 with the blades out).
+// Off: the old behaviour exactly -- the renderer-written hand pose, a 6-unit push along the
+// face normal and the rs_ss_guard_radius slider.
+//
+// A switch rather than a replacement so the two can be compared in one session. The old path
+// described one hand with two writers sampled at different moments (position and aim from the
+// renderer, roll from the latch), so while the arm moved the face and the centre disagreed.
+user bool rs_ss_guard_latch = true;
+
+// On: the rim is the mesh rim. Off: the rim is the rs_ss_guard_radius slider. Only has an
+// effect while rs_ss_guard_latch is on.
+user bool rs_ss_guard_mesh = true;
+
+// [LEFTHAND] The shield mesh was authored for the LEFT hand and NOAUTOREVERSE stops the engine
+// mirroring it, so in the right hand its front plate faces your own body. This mirrors the
+// guard side to match. Set it if you play left-handed.
+//
+// A user cvar and not vr_control_scheme: that one is global config, so the playsim cannot read
+// it for any player, including you.
+user bool rs_ss_lefthanded = false;
+
+// [EMPTYHAND] The owner's ruling, 2026-10-17: while the disc is in flight the off hand stays
+// EMPTY. It is what makes a catch, a recall and a yank-back possible at all -- the disc used
+// to fly home to a hand that was already holding your previous weapon, so the only thing it
+// could do on arrival was disappear and turn up on your back.
+//
+// Off restores the old behaviour: your weapon comes straight back on the release.
+user bool rs_ss_hand_empty = true;
+
+// [CHARGE] Shove the shield forward while the plate faces the way you are already running and
+// you dash behind it for a third of a second. The guard stays live through the dash, so a
+// frontal attack during a charge is blocked by the thing you are charging with.
+user bool rs_ss_charge = true;
+
+// [BLOCKCHARGE] What you block spins the saw up, so taking a hit on the plate arms the blade.
+user bool rs_ss_block_charge = true;
+
+// [DENT] Blocked blows leave scorch marks on the plate, riding the shield's own model. Eight
+// at a time, reused oldest first. Only blows above a light hit mark it.
+user bool rs_ss_dents = true;
+

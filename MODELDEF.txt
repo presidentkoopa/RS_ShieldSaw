@@ -267,6 +267,26 @@ Model RS_ShieldSawProp
 	// the shield's face lies along the forearm like a buckler, not square across it (the owner, 09-14).
 	// In the block, not the cvar default, so a saved rs_ss_prop yaw of 0 means aligned.
 	AngleOffset -90.0
+	// [GUARDPLATE] WHAT BLOCKS, DECLARED WHERE THE MESH IS (2026-10-17).
+	//
+	// The owner's requirement for this shield is that what blocks is what he sees. For four
+	// passes the blocking disc was a hand-typed standoff of 6 units and a hand-typed radius of
+	// 14 inside the ZScript, against a rim that measures 9.9 -- so the volume sat about ten
+	// units behind the face being drawn, and no amount of geometry work in the mod could have
+	// found that, because the two numbers had nothing to do with each other.
+	//
+	// MESH UNITS AND MESH AXES, measured with tools/md3measure.py on this model:
+	//   centre  the front plate (shieldsaw.md3 shield_front), x -9.39 y -12.45 z 0.02
+	//   normal  MD3 -Y; the PCA least-variance axis of the plate is (0.033, -0.999, -0.002)
+	//   handle  MD3 +X, the in-plane axis along the forearm
+	//   rim     29.13, and the outline is round to within 1% across every 30-degree sector,
+	//           so a circle IS this mesh's outline and no polygon is needed
+	//   thick   3.6, half of the plate's 7.2-unit span (y -16.03 to -8.86)
+	//
+	// The blades-out frames (E-H) reach 35.41 instead. That cannot be said here, because every
+	// FrameIndex in this block shares one set of parameters, so the holder scales this rim for
+	// those frames. One authored number, one derived from it.
+	GuardPlate -9.39 -12.45 0.02   0 -1 0   1 0 0   29.13 3.6
 	FrameIndex SSNH A 0 0	FrameIndex SSNH A 1 0
 	FrameIndex SSNH B 0 1	FrameIndex SSNH B 1 1
 	FrameIndex SSNH C 0 2	FrameIndex SSNH C 1 2
@@ -300,5 +320,30 @@ Model RS_ShieldSawPropOff
 	FrameIndex SSNH F 0 3	FrameIndex SSNH F 1 5
 	FrameIndex SSNH G 0 3	FrameIndex SSNH G 1 6
 	FrameIndex SSNH H 0 3	FrameIndex SSNH H 1 7
+}
+
+// [DENT] THE MARK A BLOCKED BLOW LEAVES, riding the shield's own drawn model.
+//
+// Not a decal in the engine's sense -- this engine projects decals onto walls, not onto
+// models -- but it does not need to be. Actor.FollowActor draws one model inside another's
+// frame, and FollowActorOfsInModel lets the seat be given as a POINT ON THE PARENT'S MESH,
+// which the renderer carries through the parent's scale, mirror and orientation. So a point
+// read off the plate lands on the plate, which is the whole of what a dent is.
+//
+// The mesh is a one-unit quad (dent.obj, two triangles) so Scale IS the mark's diameter in
+// mesh units. 2.2 against a rim of 29 is a mark about a fifteenth of the plate across.
+//
+// PlacementCVars because the quad's facing within the shield's frame is a constant nobody has
+// measured -- one rotation, fixed for every dent that will ever be placed, and a slider
+// settles it in the headset in one look rather than by four rebuilds of guesswork. Same
+// method as the guard ring.
+Model RS_ShieldDent
+{
+	Path "models/shieldsaw"
+	Model 0 "dent.obj"
+	Skin 0 "dent_scorch.png"
+	Scale 2.2 2.2 2.2
+	PlacementCVars rs_ss_dent
+	FrameIndex SDNT A 0 0
 }
 

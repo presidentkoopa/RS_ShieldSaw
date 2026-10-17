@@ -8,8 +8,19 @@
 // changed without touching the state.
 
 rsshield/raise          ssawdraw
+// [CATCH] The thunk of it landing in your palm. Its OWN logical name even though it points at
+// the draw sample for now: rsshield/hit already does seven jobs (block, bash, grind puff,
+// fodder bisect, embed, landing, deflect) and an eighth would be inaudible as a catch. Point
+// this at a real sample when one exists and nothing else has to change.
+rsshield/catch          ssawdraw
+// [WHIRR] The thrown disc in flight, looped. Pointed at the existing spin sample for now: a
+// silent disc crossing a room cannot be located by ear, which is the one sense that was doing
+// no work at all during a throw.
+rsshield/whirr          ssawloop
 rsshield/idle           ssawloop
 $volume rsshield/raise  0.7
+$volume rsshield/catch  1.0
+$volume rsshield/whirr  0.8
 $volume rsshield/idle   0.7
 
 $random rsshield/hit    { shldhit1 shldhit2 shldhit3 }
